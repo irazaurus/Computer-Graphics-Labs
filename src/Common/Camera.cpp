@@ -8,7 +8,7 @@ using namespace DirectX;
 
 Camera::Camera()
 {
-	SetLens(0.25f*MathHelper::Pi, 1.0f, 1.0f, 1000.0f);
+	SetLens(0.25f*MathHelper::Pi, 1.0f, 1.0f, 100000.0f);
 	BoundingFrustum::CreateFromMatrix(BoundsOriginal, XMLoadFloat4x4(&mProj));
 }
 

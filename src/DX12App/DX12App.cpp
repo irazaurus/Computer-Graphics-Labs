@@ -15,7 +15,7 @@ using namespace DirectX::PackedVector;
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "D3D12.lib")
 
-// #define DEBUG_VIEW
+#define DEBUG_VIEW
 // #define DEBUG
 
 const int gNumFrameResources = 3;
@@ -25,6 +25,7 @@ enum class RenderLayer : int
 	Opaque = 0,
 	Debug,
 	Sky,
+	Terrain,
 	Count
 };
 
@@ -68,6 +69,14 @@ struct RenderItem
 	int currentLOD = 0;
 };
 
+struct Node
+{
+	RenderItem* RItem = nullptr;
+	Node* children[4] = { nullptr };
+	int layer = 0;
+	bool hasChildren = false;
+};
+
 struct LightObject
 {
 	DirectX::XMFLOAT3 Strength = { 0.5f, 0.5f, 0.5f };
@@ -103,6 +112,7 @@ private:
 	virtual void OnMouseDown(WPARAM btnState, int x, int y)override;
 	virtual void OnMouseUp(WPARAM btnState, int x, int y)override;
 	virtual void OnMouseMove(WPARAM btnState, int x, int y)override;
+	virtual void OnMouseWheel(WPARAM btnState)override;
 
 	void OnKeyboardInput(const GameTimer& gt);
 	void AnimateMaterials(const GameTimer& gt);
@@ -114,6 +124,7 @@ private:
 
 	void LoadTexture(std::string name, std::wstring filename, TextureType type = TextureType::TEXTURE2D);
 	void LoadTextures();
+	void LoadTerrainTextures();
 	void BuildRootSignature();
 	void BuildDescriptorHeaps();
 	void BuildShadersAndInputLayout();
@@ -121,7 +132,7 @@ private:
 	void BuildPSOs();
 	void BuildFrameResources();
 	void BuildMaterials();
-	void BuildRenderItem(std::string name, std::string material, XMMATRIX translate, std::vector<std::string>* LODGeoNames, int layer = (int)RenderLayer::Opaque, float scale = 1.f, float scaleTex = 1.f);
+	RenderItem* BuildRenderItem(std::string name, std::string material, XMMATRIX translate, std::vector<std::string>* LODGeoNames, int layer = (int)RenderLayer::Opaque, float scale = 1.f, float scaleTex = 1.f);
 	void BuildRenderItems();
 	void BuildLightObjects();
 	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
@@ -130,6 +141,12 @@ private:
 	void DrawSkyBox();
 	void DrawPostProcess();
 	void DrawShadowMaps();
+
+	// Quad Tree for Terrain
+	Node* BuildNode(int layer, float x, float y, int xi, int yi);
+	void BuildTerrainQuadTree();
+	void UpdateVisibleTerrainTiles();
+	void ChooseVisibleTerrainTile(Node* node);
 
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 7> GetStaticSamplers();
 
@@ -161,6 +178,7 @@ private:
 	// Render items divided by PSO.
 	std::vector<RenderItem*> mRitemLayer[(int)RenderLayer::Count];
 	std::vector<RenderItem*> mVisibleRitems[(int)RenderLayer::Count];
+	std::vector<RenderItem*> mVisibleTerrain;
 
 	PassConstants mMainPassCB;
 
@@ -168,6 +186,12 @@ private:
 	POINT mLastMousePos;
 
 	UINT mShadowMapHeapIndex = 0;
+
+	// Quad tree typa shit
+	Node* root = nullptr;
+	int layers = 4;
+	float RootSize = 1024.f;
+	float thresholds[5] = {1500.f, 1000.f, 500.f, 200.f, 100.f};
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
@@ -221,12 +245,14 @@ bool DX12App::Initialize()
 	mCamera.RotateY(0.7f);
 
 	LoadTextures();
+	LoadTerrainTextures();
 	BuildRootSignature();
 	BuildDescriptorHeaps();
 	BuildShadersAndInputLayout();
 	BuildShapeGeometry();
 	BuildMaterials();
 	BuildRenderItems();
+	BuildTerrainQuadTree();
 	BuildLightObjects();
 	BuildFrameResources();
 	BuildPSOs();
@@ -264,11 +290,11 @@ void DX12App::CreateRtvAndDsvDescriptorHeaps()
 }
 
 void DX12App::OnResize()
-{
+{ 
 	D3DApp::OnResize();
 
 	// The window resized, so update the aspect ratio and recompute the projection matrix.
-	mCamera.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+	mCamera.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 100000.0f);
 	mGBuffer->Resize(mClientWidth, mClientHeight, md3dDevice.Get());
 
 	// copy gbuffer resources into the srv heap
@@ -302,6 +328,7 @@ void DX12App::Update(const GameTimer& gt)
 
 	AnimateMaterials(gt);
 	UpdateObjectCBs(gt);
+	UpdateVisibleTerrainTiles();
 	UpdateLightCBs(gt);
 	UpdateMaterialCBs(gt);
 	UpdateMainPassCB(gt);
@@ -402,21 +429,33 @@ void DX12App::OnMouseMove(WPARAM btnState, int x, int y)
 	mLastMousePos.y = y;
 }
 
+void DX12App::OnMouseWheel(WPARAM btnState)
+{
+	short wheelDelta = GET_WHEEL_DELTA_WPARAM(btnState);
+
+	float& speed = mCamera.speed;
+	if (wheelDelta > 0)
+		speed = std::min(speed + 4.0f, 5000.0f);
+	else if (wheelDelta < 0)
+		speed = (speed - 4.0f) > 1.0f ? (speed - 1.0f) : 1.0f;
+
+}
+
 void DX12App::OnKeyboardInput(const GameTimer& gt)
 {
 	const float dt = gt.DeltaTime();
 
 	if (GetAsyncKeyState('W') & 0x8000)
-		mCamera.Walk(30.0f * dt);
+		mCamera.Walk(mCamera.speed * dt);
 
 	if (GetAsyncKeyState('S') & 0x8000)
-		mCamera.Walk(-30.0f * dt);
+		mCamera.Walk(-mCamera.speed * dt);
 
 	if (GetAsyncKeyState('A') & 0x8000)
-		mCamera.Strafe(-30.0f * dt);
+		mCamera.Strafe(-mCamera.speed * dt);
 
 	if (GetAsyncKeyState('D') & 0x8000)
-		mCamera.Strafe(30.0f * dt);
+		mCamera.Strafe(mCamera.speed * dt);
 
 	mCamera.UpdateViewMatrix();
 }
@@ -677,7 +716,7 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
 	mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
 	mMainPassCB.NearZ = 1.0f;
-	mMainPassCB.FarZ = 1000.0f;
+	mMainPassCB.FarZ = 100000.0f;
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
 
@@ -718,6 +757,23 @@ void DX12App::LoadTextures()
 	LoadTexture("skyBrdf", L"../Textures/skyBrdf.dds");
 	LoadTexture("skyDiffuseCube", L"../Textures/skyDiffuseCube.dds", TextureType::CUBEMAP);
 	LoadTexture("skyIrradianceCube", L"../Textures/skyIrradianceCube.dds", TextureType::CUBEMAP);
+}
+
+void DX12App::LoadTerrainTextures()
+{
+	for (int layer = 0; layer < layers; layer++)
+		for (int x = 0; x < (1 << layer); x++)
+			for (int y = 0; y < (1 << layer); y++)
+			{
+				LoadTexture("tile_diffuse_level" + std::to_string(layer) + "_" + std::to_string(x) + "_" + std::to_string(y),
+					L"../Textures/Terrain/L" + std::to_wstring(layer) + L"/diffuse/tile_diffuse_level" + std::to_wstring(layer) + L"_" + std::to_wstring(x) + L"_" + std::to_wstring(y) + L".dds");
+				
+				LoadTexture("tile_height_level" + std::to_string(layer) + "_" + std::to_string(x) + "_" + std::to_string(y),
+					L"../Textures/Terrain/L" + std::to_wstring(layer) + L"/height/tile_height_level" + std::to_wstring(layer) + L"_" + std::to_wstring(x) + L"_" + std::to_wstring(y) + L".dds");
+				
+				LoadTexture("tile_normal_level" + std::to_string(layer) + "_" + std::to_string(x) + "_" + std::to_string(y),
+					L"../Textures/Terrain/L" + std::to_wstring(layer) + L"/normal/tile_normal_level" + std::to_wstring(layer) + L"_" + std::to_wstring(x) + L"_" + std::to_wstring(y) + L".dds");
+			}
 }
 
 void DX12App::BuildRootSignature()
@@ -771,7 +827,7 @@ void DX12App::BuildDescriptorHeaps()
 	// Create the SRV heap.
 	//
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 200;
+	srvHeapDesc.NumDescriptors = 20000;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
@@ -846,11 +902,14 @@ void DX12App::BuildShadersAndInputLayout()
 		NULL, NULL
 	};
 
-	mShaders["deferredVS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "VSWithoutTess", "vs_5_0");
-	mShaders["tessVS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "VS", "vs_5_0");
+	mShaders["deferredVS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "VS", "vs_5_0");
+	mShaders["displaceVS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "displaceVS", "vs_5_0");
+	mShaders["tessVS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "tessVS", "vs_5_0");
 	mShaders["tessHS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "HS", "hs_5_0");
 	mShaders["tessDS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "DS", "ds_5_0");
+	mShaders["curtainsGS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "curtainsGS", "gs_5_0");
 	mShaders["deferredPS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "DeferredPS", "ps_5_0");
+	mShaders["originalNormalPS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "OriginalNormalPS", "ps_5_0");
 	
 	mShaders["shadowVS"] = d3dUtil::CompileShader(L"Shaders\\Shadows.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["shadowGS"] = d3dUtil::CompileShader(L"Shaders\\Shadows.hlsl", nullptr, "GS", "gs_5_1");
@@ -883,7 +942,7 @@ void DX12App::BuildShapeGeometry()
 	std::vector<GeometryGenerator::MeshData> allMeshData;
 
 	// if you want to generate new model -- generate it here
-	allMeshData.push_back( geoGen.CreateGrid(50.0f, 50.0f, 50, 50, 1.0f) );           // grid
+	allMeshData.push_back( geoGen.CreateGrid(1.0f, 1.0f, 128, 128, 1.0f) );           // grid
 	allMeshData.push_back( geoGen.CreateBox(10.0f, 10.0f, 10.0f, 3) );                // box
 	allMeshData.push_back( geoGen.LoadModel("..\\Models\\trex.obj"));             // trex
 	allMeshData.push_back( geoGen.LoadModel("..\\Models\\Baryonyx.obj"));         // baryonyx
@@ -1120,6 +1179,23 @@ void DX12App::BuildPSOs()
 
 	deferredGeometryPsoDesc.VS =
 	{
+		reinterpret_cast<BYTE*>(mShaders["displaceVS"]->GetBufferPointer()),
+		mShaders["displaceVS"]->GetBufferSize()
+	};
+	deferredGeometryPsoDesc.GS =
+	{
+	  reinterpret_cast<BYTE*>(mShaders["curtainsGS"]->GetBufferPointer()),
+	  mShaders["curtainsGS"]->GetBufferSize()
+	};
+	deferredGeometryPsoDesc.PS =
+	{
+	 reinterpret_cast<BYTE*>(mShaders["originalNormalPS"]->GetBufferPointer()),
+	 mShaders["originalNormalPS"]->GetBufferSize()
+	};
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&deferredGeometryPsoDesc, IID_PPV_ARGS(&mPSOs["terrainGeometry"])));
+
+	deferredGeometryPsoDesc.VS =
+	{
 		reinterpret_cast<BYTE*>(mShaders["tessVS"]->GetBufferPointer()),
 		mShaders["tessVS"]->GetBufferSize()
 	};
@@ -1309,9 +1385,28 @@ void DX12App::BuildMaterials()
 			mMaterials[sphere->Name] = std::move(sphere);
 		}
 	}
+
+	// terrain materials
+	for (int layer = 0; layer < layers; layer++)
+		for (int x = 0; x < (1 << layer); x++)
+			for (int y = 0; y < (1 << layer); y++)
+			{
+				auto terrain = std::make_unique<Material>();
+				terrain->Name = "terrain" + std::to_string(layer) + "_" + std::to_string(x) + "_" + std::to_string(y);
+				terrain->MatCBIndex = matCBI++;
+				terrain->DiffuseSrvHeapIndex = mTextures["tile_diffuse_level" + std::to_string(layer) + "_" + std::to_string(x) + "_" + std::to_string(y)]->SrvHeapIndex;
+				terrain->DisplaceSrvHeapIndex = mTextures["tile_height_level" + std::to_string(layer) + "_" + std::to_string(x) + "_" + std::to_string(y)]->SrvHeapIndex;
+				terrain->NormalSrvHeapIndex = mTextures["tile_normal_level" + std::to_string(layer) + "_" + std::to_string(x) + "_" + std::to_string(y)]->SrvHeapIndex;
+				terrain->DiffuseAlbedo = XMFLOAT4(0.5f, 0.5f, 0.5f, 1.0f);
+				terrain->FresnelR0 = XMFLOAT3(0.5f, 0.5f, 0.5f);
+				terrain->Roughness = 1.0f;
+				terrain->Metallic = 0.1f;
+
+				mMaterials[terrain->Name] = std::move(terrain);
+			}
 }
 
-void DX12App::BuildRenderItem(std::string name, std::string material, XMMATRIX translate, std::vector<std::string>* LODGeoNames, int layer, float scale, float scaleTex)
+RenderItem* DX12App::BuildRenderItem(std::string name, std::string material, XMMATRIX translate, std::vector<std::string>* LODGeoNames, int layer, float scale, float scaleTex)
 {
 	auto ptr = std::make_unique<RenderItem>();
 	XMStoreFloat4x4(&ptr->World, XMMatrixScaling(scale, scale, scale) * translate);
@@ -1320,10 +1415,6 @@ void DX12App::BuildRenderItem(std::string name, std::string material, XMMATRIX t
 	ptr->Mat = mMaterials[material].get();
 	ptr->Geo = mGeometries["shapeGeo"].get();
 	ptr->geoName = name;
-	if (layer == 0)
-		ptr->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST;
-	else
-		ptr->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	ptr->IndexCount = ptr->Geo->DrawArgs[name].IndexCount;
 	ptr->Geo->DrawArgs[name].Bounds.Transform(ptr->Bounds, XMLoadFloat4x4(&ptr->World));
 	ptr->StartIndexLocation = ptr->Geo->DrawArgs[name].StartIndexLocation;
@@ -1332,8 +1423,11 @@ void DX12App::BuildRenderItem(std::string name, std::string material, XMMATRIX t
 	if (LODGeoNames != nullptr)
 		ptr->LODGeoNames = *LODGeoNames;
 
-	mRitemLayer[layer].push_back(ptr.get());
+	auto* res = ptr.get();
+	mRitemLayer[layer].push_back(res);
 	mAllRitems.push_back(std::move(ptr));
+
+	return res;
 }
 
 void DX12App::BuildRenderItems()
@@ -1341,8 +1435,7 @@ void DX12App::BuildRenderItems()
 	BuildRenderItem("box", "sky", XMMatrixIdentity(), nullptr, (int) RenderLayer::Sky, 5000.0f);
 	BuildRenderItem("quad", "bricks0", XMMatrixIdentity(), nullptr, (int)RenderLayer::Debug);
 
-	BuildRenderItem("box", "bricks0", XMMatrixTranslation(15.f, 0.f, 0.f), nullptr);
-	BuildRenderItem("box", "bricks0", XMMatrixScaling(50.f, 0.1f, 50.f) * XMMatrixTranslation(0.f, -5.f, 10.f), nullptr, 0, 1.f, 10.f);
+	//BuildRenderItem("box", "bricks0", XMMatrixTranslation(15.f, 0.f, 0.f), nullptr);
 	BuildRenderItem("trex", "trex", XMMatrixTranslation(40.f, -5.f, -60.f), nullptr, 0, 2.f);
 
 	std::vector<std::string> BaryonyxLODs = {"Baryonyx", "box"};
@@ -1504,8 +1597,12 @@ void DX12App::DrawDeferredGeometry()
 
 	mCommandList->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	DrawRenderItems(mCommandList.Get(), mVisibleRitems[(int)RenderLayer::Opaque]);
+
+	// terrain w/ tessellation draw
+	mCommandList->SetPipelineState(mPSOs["terrainGeometry"].Get());
+	DrawRenderItems(mCommandList.Get(), mVisibleTerrain);
 	
-	for (int i = 0; i < mVisibleRitems->size(); i++)
+	for (int i = 0; i < (int)RenderLayer::Count; i++)
 	{
 		mVisibleRitems[i].clear();
 	}
@@ -1675,6 +1772,80 @@ void DX12App::DrawShadowMaps()
 			shadowMap->Resource(),
 			D3D12_RESOURCE_STATE_DEPTH_WRITE,
 			D3D12_RESOURCE_STATE_GENERIC_READ));
+	}
+}
+
+Node* DX12App::BuildNode(int layer, float x, float y, int xi, int yi)
+{
+
+	Node* node = new Node();
+	node->layer = layer;
+
+	float scaleFactor = RootSize / ( 1 << layer );
+
+	std::string debugString = std::to_string(layer) + "_" + std::to_string(xi) + "_" + std::to_string(yi) + "\n";
+	OutputDebugStringA(debugString.c_str());
+
+	node->RItem = BuildRenderItem("grid", "terrain" + std::to_string(layer) + "_" + std::to_string(xi) + "_" + std::to_string(yi),
+		XMMatrixScaling(scaleFactor, 1.0f, scaleFactor) * XMMatrixTranslation(x, -40.f, y),
+		nullptr, (int)RenderLayer::Terrain);
+
+	if (layer > layers - 2)
+	{
+		return node;
+	}
+
+	node->hasChildren = true;
+
+
+	XMFLOAT2 offsets[4] = { {-1.f, -1.f},
+							{-1.f, 1.f},
+							{1.f, -1.f},
+							{1.f, 1.f} };
+
+	int coords[4][2] =		{{0, 1},
+							{0, 0},
+							{1, 1},
+							{1, 0} };
+
+	for (int i = 0; i < 4; i++)
+	{
+		node->children[i] = BuildNode(layer + 1, x + offsets[i].x * scaleFactor * 0.25f, y + offsets[i].y * scaleFactor * 0.25f,
+					xi * 2 + coords[i][0], yi * 2 + coords[i][1]);
+	}
+
+	return node;
+}
+
+void DX12App::BuildTerrainQuadTree()
+{
+	root = BuildNode(0, 0.f, 0.f, 0, 0);
+}
+
+void DX12App::UpdateVisibleTerrainTiles()
+{
+	mVisibleTerrain.clear();
+	
+	ChooseVisibleTerrainTile(root);
+}
+
+void DX12App::ChooseVisibleTerrainTile(Node* node)
+{
+	if (!mCamera.Bounds.Intersects(node->RItem->Bounds))
+		return;
+
+	float distToCam;
+	XMStoreFloat(&distToCam, XMVector3Length(XMVectorSubtract(mCamera.GetPosition(), XMLoadFloat3(&node->RItem->Bounds.Center))));
+
+	if (distToCam > thresholds[node->layer] || !node->hasChildren)
+		mVisibleTerrain.push_back(node->RItem);
+
+	else
+	{
+		for (auto chold : node->children)
+		{
+			ChooseVisibleTerrainTile(chold);
+		}
 	}
 }
 

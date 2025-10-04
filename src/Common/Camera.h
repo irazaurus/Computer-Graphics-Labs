@@ -72,7 +72,7 @@ public:
 	// After modifying camera position/orientation, call to rebuild the view matrix.
 	void UpdateViewMatrix();
 	DirectX::BoundingFrustum Bounds;
-
+	float speed = 30.f;
 
 private:
 
