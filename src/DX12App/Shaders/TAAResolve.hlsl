@@ -4,29 +4,89 @@ Texture2D gVelocityBuf  : register(t2);
 
 SamplerState gSampler : register(s0);
 
+cbuffer cbPass : register(b0)
+{
+    float4x4 gView;
+    float4x4 gInvView;
+    float4x4 gProj;
+    float4x4 gInvProj;
+    float4x4 gViewProj;
+    float4x4 gPrevViewProj;
+    float4x4 gInvViewProj;
+    float3 gEyePosW;
+    int gCurrentFrame;
+    float2 gRenderTargetSize;
+    float2 gInvRenderTargetSize;
+    float gNearZ;
+    float gFarZ;
+    float gTotalTime;
+    float gDeltaTime;
+};
+
 struct VertexOut
 {
     float4 PosH : SV_POSITION;
-    float2 TexC : TEXCOORD;
+    //float2 TexC : TEXCOORD;
 };
 
 VertexOut VS(uint vid : SV_VertexID)
-{
-    VertexOut vout;
-    
+{    
     // Generating fullscreen triangle
-    float2 texcoord = float2((vid << 1) & 2, vid & 2);
-    vout.PosH = float4(texcoord * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 0.0f, 1.0f);
-    vout.TexC = texcoord;
+    float2 verts[3] =
+    {
+        float2(-1, -1),
+        float2(-1, 3),
+        float2(3, -1)
+    };
     
+    VertexOut vout;
+    vout.PosH = float4(verts[vid], 0, 1);
     return vout;
 }
 
 float4 PS(VertexOut pin) : SV_Target
 {
-    uint2 pixelC = pin.PosH.xy;
-    float4 color = gInputImage.Load(int3(pixelC, 0));
-    float4 prevColor = gPrevImage.Load(int3(pixelC, 0));
+    uint2 TexelCoord = pin.PosH.xy;
+
+    float2 MotionVector = gVelocityBuf.Load(int3(TexelCoord, 0)).xy;
+    float MotionLength = length(MotionVector);
     
-    return color * 0.1f + prevColor * 0.9f;
+    float2 PrevTexelCoord = TexelCoord + MotionVector;
+    float4 CurrFrameColor = gInputImage.Load(int3(TexelCoord, 0));
+    
+    float4 PrevFrameColor = CurrFrameColor;
+    
+    //return lerp(CurrFrameColor, PrevFrameColor, 0.9f);
+    
+    bool IsPrevUVValid = all(PrevTexelCoord >= 0 && PrevTexelCoord < gRenderTargetSize);
+    if (IsPrevUVValid)
+    {
+        PrevFrameColor = gPrevImage.Load(int3(PrevTexelCoord, 0));
+        
+        // Color clamping
+        float4 minColor = CurrFrameColor;
+        float4 maxColor = CurrFrameColor;
+        
+        for (int x = -1; x <= 1; x++)
+        {
+            for (int y = -1; y <= 1; y++)
+            {
+                uint2 neighborCoord = TexelCoord + uint2(x, y);
+                if (all(neighborCoord >= 0 && neighborCoord < gRenderTargetSize))
+                {
+                    float4 neighborColor = gInputImage.Load(int3(neighborCoord, 0));
+                    minColor = min(minColor, neighborColor);
+                    maxColor = max(maxColor, neighborColor);
+                }
+            }
+        }
+        
+        
+        PrevFrameColor = clamp(PrevFrameColor, minColor, maxColor);
+        
+        float BlendFactor = 0.9 * saturate(1.0 - MotionLength / 50.0); // more movement = less influence
+        return lerp(CurrFrameColor, PrevFrameColor, BlendFactor);
+    }
+    
+    return CurrFrameColor;
 }

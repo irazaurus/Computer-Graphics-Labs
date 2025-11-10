@@ -27,6 +27,7 @@ cbuffer cbPass : register(b1)
     float4x4 gProj;
     float4x4 gInvProj;
     float4x4 gViewProj;
+    float4x4 gPrevViewProj;
     float4x4 gInvViewProj;
     float3 gEyePosW;
     float cbPerObjectPad1;

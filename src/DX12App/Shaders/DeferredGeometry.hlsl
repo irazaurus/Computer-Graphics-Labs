@@ -16,8 +16,11 @@ struct VertexIn
 struct VertexOut
 {
     float3 Tangent : TANGENT;
-    float4 PosW : POSITION;
+    float4 PosW : POSITION0;
     float4 PosH : SV_POSITION;
+    float4 PosHNoJitter : POSITION1;
+    float4 PrevPosHNoJitter : POSITION2;
+    float4 PrevPosW : POSITION3;
     float3 NormalL : NORMAL;
     float2 TexC : TEXCOORD;
 };
@@ -35,6 +38,7 @@ struct GBufferData
     float4 normal : SV_TARGET2;
     float4 materialAlbedo : SV_TARGET3;
     float4 MaterialFresnelRoughness : SV_TARGET4;
+    float2 VelocityBuf : SV_TARGET5;
 };
 
 float Halton(uint index, uint base)
@@ -91,6 +95,11 @@ VertexOut VS(VertexIn vin)
     vo.Tangent = vin.Tangent;
     vo.PosW = mul(float4(vin.PosL, 1.0f), gWorld);
     vo.PosH = mul(vo.PosW, gViewProj);
+    
+    vo.PosHNoJitter = vo.PosH;
+    vo.PrevPosW = mul(float4(vin.PosL, 1.0f), gPrevWorld);
+    vo.PrevPosHNoJitter = mul(vo.PrevPosW, gPrevViewProj);
+    
     vo.PosH.xy += GenerateJitter(gCurrentFrame) * vo.PosH.w;
     
     vo.NormalL = vin.NormalL;
@@ -105,6 +114,7 @@ VertexOut displaceVS(VertexIn vin)
     
     vo.Tangent = vin.Tangent;
     vo.PosW = mul(float4(vin.PosL, 1.0f), gWorld);
+    vo.PrevPosW = mul(float4(vin.PosL, 1.0f), gPrevWorld);
     vo.NormalL = vin.NormalL;
     vo.TexC = mul(float4(vin.TexC, 0.f, 1.f), gTexTransform).xy;
     
@@ -115,6 +125,10 @@ VertexOut displaceVS(VertexIn vin)
     
     vo.PosH = mul(vo.PosW, gViewProj);
     
+    vo.PosHNoJitter = vo.PosH;
+    vo.PrevPosHNoJitter = mul(vo.PrevPosW, gPrevViewProj);
+    
+    vo.PosH.xy += GenerateJitter(gCurrentFrame) * vo.PosH.w;
     return vo;
 }
 
@@ -190,7 +204,13 @@ VertexOut DS(PatchTess patchTess,
     p.y += disp * 2.0f;
     
     dout.PosW = mul(float4(p, 1.0f), gWorld);
+    dout.PrevPosW = mul(float4(p, 1.0f), gPrevWorld);
     dout.PosH = mul(dout.PosW, gViewProj);
+    dout.PosHNoJitter = dout.PosH;
+    dout.PrevPosHNoJitter = mul(dout.PrevPosW, gPrevViewProj);
+    
+    dout.PosH.xy += GenerateJitter(gCurrentFrame) * dout.PosH.w;
+    
     dout.NormalL = norm;
     dout.Tangent = tri[0].Tangent;
     dout.TexC = t;
@@ -222,11 +242,17 @@ void curtainsGS(triangle VertexOut p[3], inout TriangleStream<VertexOut> stream)
             // if yes -- generate from it two triangles down
             VertexOut p3 = p1;
             p3.PosW.y -= downOffset;
+            p3.PrevPosW.y -= downOffset;
             p3.PosH = mul(p3.PosW, gViewProj);
+            p3.PosHNoJitter = p3.PosH;
+            p3.PrevPosHNoJitter = mul(p3.PrevPosW, gPrevViewProj);
             
             VertexOut p4 = p2;
             p4.PosW.y -= downOffset;
+            p4.PrevPosW.y -= downOffset;
             p4.PosH = mul(p4.PosW, gViewProj);
+            p4.PosHNoJitter = p4.PosH;
+            p4.PrevPosHNoJitter = mul(p4.PrevPosW, gPrevViewProj);
             
             stream.Append(p1);
             stream.Append(p2);
@@ -254,6 +280,17 @@ GBufferData OriginalNormalPS(VertexOut pin)
     pout.normal = float4(normalMap, Metallic);
     pout.materialAlbedo = gDiffuseAlbedo;
     pout.MaterialFresnelRoughness = float4(gFresnelR0, gRoughness);
+    
+    /*float2 currentNDC = pin.PosHNoJitter.xy / pin.PosHNoJitter.w;
+    float2 prevNDC = pin.PrevPosHNoJitter.xy / pin.PrevPosHNoJitter.w;
+    currentNDC = currentNDC * 0.5f + 0.5f;
+    prevNDC = prevNDC * 0.5f + 0.5f;
+
+    pout.VelocityBuf = (prevNDC - currentNDC) * gRenderTargetSize;
+    pout.VelocityBuf.y *= -1.f;
+    //filter out MV noise
+    if (length(pout.VelocityBuf) < 0.05)
+        pout.VelocityBuf = float2(0.f, 0.f);*/
 
     return pout;
 }
@@ -286,6 +323,17 @@ GBufferData DeferredPS(VertexOut pin)
     pout.normal = float4(normalMap, Metallic);
     pout.materialAlbedo = gDiffuseAlbedo;
     pout.MaterialFresnelRoughness = float4(gFresnelR0, gRoughness);
+    
+    float2 currentNDC = pin.PosHNoJitter.xy / pin.PosHNoJitter.w;
+    float2 prevNDC = pin.PrevPosHNoJitter.xy / pin.PrevPosHNoJitter.w;
+    currentNDC = currentNDC * 0.5f + 0.5f;
+    prevNDC = prevNDC * 0.5f + 0.5f;
+
+    pout.VelocityBuf = (prevNDC - currentNDC) * gRenderTargetSize;
+    pout.VelocityBuf.y *= -1.f;
+    //filter out MV noise
+    if (length(pout.VelocityBuf) < 0.05)
+        pout.VelocityBuf = float2(0.f, 0.f);
 
     return pout;
 }

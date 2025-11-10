@@ -14,6 +14,7 @@ public:
     ComPtr<ID3D12Resource> NormalTex        = nullptr;
     ComPtr<ID3D12Resource> MaterialAlbedoTex                = nullptr;
     ComPtr<ID3D12Resource> MaterialFresnelRoughnessTex      = nullptr;
+    ComPtr<ID3D12Resource> VelocityTex = nullptr;
 
     ComPtr<ID3D12Resource> AccumulationBuf  = nullptr;
     ComPtr<ID3D12Resource> BloomTex         = nullptr;
@@ -38,10 +39,13 @@ public:
     D3D12_CPU_DESCRIPTOR_HANDLE AccumulationRTV;
     D3D12_CPU_DESCRIPTOR_HANDLE BloomRTV;
 
+    D3D12_CPU_DESCRIPTOR_HANDLE VelocitySRV;
+    D3D12_CPU_DESCRIPTOR_HANDLE VelocityRTV;
+
     ComPtr<ID3D12DescriptorHeap> m_RTVDescriptorHeap;
     ComPtr<ID3D12DescriptorHeap> m_SRVDescriptorHeap;
 
-    const int NumBuffers = 7;
+    const int NumBuffers = 8;
     int Channel0SRVHeapIndex;
 
     Gbuffer(int width, int height, Microsoft::WRL::ComPtr<ID3D12Device> device);

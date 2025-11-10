@@ -40,6 +40,7 @@ struct RenderItem
 	// relative to the world space, which defines the position, orientation,
 	// and scale of the object in the world.
 	XMFLOAT4X4 World = MathHelper::Identity4x4();
+	XMFLOAT4X4 PrevWorld = MathHelper::Identity4x4();
 
 	XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
 
@@ -67,6 +68,9 @@ struct RenderItem
 	int layer;
 	std::vector<std::string> LODGeoNames;
 	int currentLOD = 0;
+
+	// shit
+	bool InitFrame = true;
 };
 
 struct Node
@@ -538,6 +542,7 @@ void DX12App::UpdateObjectCBs(const GameTimer& gt)
 	for (auto& e : mAllRitems)
 	{
 		XMMATRIX world = XMLoadFloat4x4(&e->World);
+		XMMATRIX prevWorld = XMLoadFloat4x4(&e->PrevWorld);
 		
 		if (e->NumFramesDirty > 0)
 		{
@@ -547,6 +552,15 @@ void DX12App::UpdateObjectCBs(const GameTimer& gt)
 			ObjectConstants objConstants;
 			XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
 			XMStoreFloat4x4(&objConstants.TexTransform, XMMatrixTranspose(texTransform));
+
+			// shit
+			if (e->InitFrame)
+			{
+				XMStoreFloat4x4(&objConstants.PrevWorld, XMMatrixTranspose(world));
+				e->InitFrame = false;
+			}
+			else XMStoreFloat4x4(&objConstants.PrevWorld, XMMatrixTranspose(prevWorld));
+			XMStoreFloat4x4(&e->PrevWorld, world);
 
 			currObjectCB->CopyData(e->ObjCBIndex, objConstants);
 
@@ -769,6 +783,7 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	XMMATRIX proj = mCamera.GetProj();
 
 	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
+	static XMMATRIX prevViewProj = viewProj;
 	XMMATRIX invView = XMMatrixInverse(&XMMatrixDeterminant(view), view);
 	XMMATRIX invProj = XMMatrixInverse(&XMMatrixDeterminant(proj), proj);
 	XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(viewProj), viewProj);
@@ -778,6 +793,7 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	XMStoreFloat4x4(&mMainPassCB.Proj, XMMatrixTranspose(proj));
 	XMStoreFloat4x4(&mMainPassCB.InvProj, XMMatrixTranspose(invProj));
 	XMStoreFloat4x4(&mMainPassCB.ViewProj, XMMatrixTranspose(viewProj));
+	XMStoreFloat4x4(&mMainPassCB.PrevViewProj, XMMatrixTranspose(prevViewProj));
 	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
 	mMainPassCB.EyePosW = mCamera.GetPosition3f();
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
@@ -787,6 +803,8 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
 	mMainPassCB.currentFrame = currentFrame;
+
+	prevViewProj = viewProj;
 
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
@@ -1255,12 +1273,13 @@ void DX12App::BuildPSOs()
 #else
 	deferredGeometryPsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
 #endif // DEBUG_VIEW
-	deferredGeometryPsoDesc.NumRenderTargets = 5;
+	deferredGeometryPsoDesc.NumRenderTargets = 6;
 	deferredGeometryPsoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;		   // diffuse
 	deferredGeometryPsoDesc.RTVFormats[1] = DXGI_FORMAT_R32G32B32A32_FLOAT;    // zwzanashih
 	deferredGeometryPsoDesc.RTVFormats[2] = DXGI_FORMAT_R16G16B16A16_SNORM;	   // normal
 	deferredGeometryPsoDesc.RTVFormats[3] = DXGI_FORMAT_R8G8B8A8_UNORM;        // diffuse albedo
 	deferredGeometryPsoDesc.RTVFormats[4] = DXGI_FORMAT_R8G8B8A8_UNORM;        // fresnel & roughness
+	deferredGeometryPsoDesc.RTVFormats[5] = DXGI_FORMAT_R16G16_FLOAT;          // velocity
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&deferredGeometryPsoDesc, IID_PPV_ARGS(&mPSOs["deferredGeometry"])));
 
 	deferredGeometryPsoDesc.VS =
@@ -1683,14 +1702,15 @@ void DX12App::DrawDeferredGeometry()
 	mCommandList->RSSetScissorRects(1, &mScissorRect);
 	mCommandList->SetPipelineState(mPSOs["deferredGeometry"].Get());
 
-	D3D12_CPU_DESCRIPTOR_HANDLE rtvs[5] = {
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvs[6] = {
 		 mGBuffer->DiffuseRTV,
 		 mGBuffer->ZWzanashihRTV,
 		 mGBuffer->NormalRTV,
 		 mGBuffer->MaterialAlbedoRTV,
-		 mGBuffer->MaterialFresnelRoughnessRTV
+		 mGBuffer->MaterialFresnelRoughnessRTV,
+		 mGBuffer->VelocityRTV
 	};
-	mCommandList->OMSetRenderTargets(5, rtvs, false, &DepthStencilView());
+	mCommandList->OMSetRenderTargets(6, rtvs, false, &DepthStencilView());
 
 	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 	mCommandList->SetGraphicsRootConstantBufferView(11, passCB->GetGPUVirtualAddress());
@@ -1901,7 +1921,7 @@ void DX12App::TAAResolve()
 
 	mCommandList->OMSetRenderTargets(1, &CD3DX12_CPU_DESCRIPTOR_HANDLE(mRtvHeap->GetCPUDescriptorHandleForHeapStart(), mResolvedAccBufferRTVHeapIndex, mRtvDescriptorSize),
 		FALSE, &DepthStencilView());
-	mCommandList->SetPipelineState(mPSOs["TAAResolve"].Get()); // TODO
+	mCommandList->SetPipelineState(mPSOs["TAAResolve"].Get());
 	mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 	UINT passCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstants));
@@ -1915,7 +1935,7 @@ void DX12App::TAAResolve()
 	
 	mCommandList->SetGraphicsRootDescriptorTable(0, GetGpuSrv(mGBuffer->Channel0SRVHeapIndex + 6));
 	mCommandList->SetGraphicsRootDescriptorTable(1, GetGpuSrv(mPrevFrameSRVHeapIndex));
-	//mCommandList->SetGraphicsRootDescriptorTable(2, GetGpuSrv(mGBuffer->VelocityBuffer.SRVHeapIndex));
+	mCommandList->SetGraphicsRootDescriptorTable(2, GetGpuSrv(mGBuffer->Channel0SRVHeapIndex + 7));
 
 	mCommandList->DrawInstanced(6, 1, 0, 0);
 

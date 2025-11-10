@@ -27,6 +27,7 @@ cbuffer cbPass : register(b0)
     float4x4 gProj;
     float4x4 gInvProj;
     float4x4 gViewProj;
+    float4x4 gPrevViewProj;
     float4x4 gInvViewProj;
     float3 gEyePosW;
     int gCurrentFrame;
@@ -47,6 +48,30 @@ cbuffer LightConstants : register(b1)
     float4x4 LViewProj[6];
     float4x4 LShadowTransform[6];
 };
+
+
+float Halton(uint index, uint base)
+{
+    float f = 1.0f;
+    float result = 0.0f;
+    
+    while (index > 0)
+    {
+        f /= (float) base;
+        result += f * (float) (index % base);
+        index = (int) (floor((float) index / (float) base));
+    }
+    
+    return result;
+}
+
+float2 GenerateJitter(int frameIndex)
+{
+    return float2(
+        Halton((uint) frameIndex, 2),
+        Halton((uint) frameIndex, 3)
+    ) / gRenderTargetSize;
+}
 
 float DistributionGGX(float3 N, float3 H, float roughness)
 {
@@ -101,6 +126,8 @@ float3 RestoreWorldPosition(float2 UV, float depth)
     clipPos.y = 1.0f - UV.y * 2.0f;
     clipPos.z = depth;
     clipPos.w = 1.0f;
+    
+    clipPos.xy -= GenerateJitter(gCurrentFrame) * clipPos.w;
 
     //transform into world space
     float4 viewPos = mul(clipPos, gInvViewProj);

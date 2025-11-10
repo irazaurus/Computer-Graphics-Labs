@@ -11,6 +11,7 @@ SamplerComparisonState gsamShadow : register(s6);
 cbuffer cbPerObject : register(b0)
 {
     float4x4 gWorld;
+    float4x4 gPrevWorld;
 	float4x4 gTexTransform;
 };
 
@@ -21,6 +22,7 @@ cbuffer cbPass : register(b1)
     float4x4 gProj;
     float4x4 gInvProj;
     float4x4 gViewProj;
+    float4x4 gPrevViewProj;
     float4x4 gInvViewProj;
     float3 gEyePosW;
     int gCurrentFrame;
