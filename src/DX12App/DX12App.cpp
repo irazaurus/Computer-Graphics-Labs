@@ -782,7 +782,6 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 {
 	XMMATRIX view = mCamera.GetView();
 	XMMATRIX proj = mCamera.GetProj();
-	static XMFLOAT3 prevPosW = mCamera.GetPosition3f();
 
 	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
 	static XMMATRIX prevViewProj = viewProj;
@@ -798,7 +797,6 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	XMStoreFloat4x4(&mMainPassCB.PrevViewProj, XMMatrixTranspose(prevViewProj));
 	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
 	mMainPassCB.EyePosW = mCamera.GetPosition3f();
-	mMainPassCB.PrevEyePosW = prevPosW;
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
 	mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
 	mMainPassCB.NearZ = 1.0f;
@@ -808,7 +806,6 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.currentFrame = currentFrame;
 
 	prevViewProj = viewProj;
-	prevPosW = mCamera.GetPosition3f();
 
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
