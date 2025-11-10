@@ -8,6 +8,7 @@ class Gbuffer {
 
     Microsoft::WRL::ComPtr<ID3D12Device> md3dDevice;
 
+public:
     ComPtr<ID3D12Resource> DiffuseTex       = nullptr;
     ComPtr<ID3D12Resource> ZWzanashihTex      = nullptr;
     ComPtr<ID3D12Resource> NormalTex        = nullptr;
