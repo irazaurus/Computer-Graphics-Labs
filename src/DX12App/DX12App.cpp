@@ -119,7 +119,7 @@ private:
 	virtual void OnMouseWheel(WPARAM btnState)override;
 
 	void OnKeyboardInput(const GameTimer& gt);
-	void AnimateMaterials(const GameTimer& gt);
+	void AnimateObjects(const GameTimer& gt);
 	void UpdateObjectCBs(const GameTimer& gt);
 	void UpdateLightCBs(const GameTimer& gt);
 	void UpdateMaterialCBs(const GameTimer& gt);
@@ -392,7 +392,7 @@ void DX12App::Update(const GameTimer& gt)
 		CloseHandle(eventHandle);
 	}
 
-	AnimateMaterials(gt);
+	AnimateObjects(gt);
 	UpdateObjectCBs(gt);
 	UpdateVisibleTerrainTiles();
 	UpdateLightCBs(gt);
@@ -508,7 +508,7 @@ void DX12App::OnMouseWheel(WPARAM btnState)
 	if (wheelDelta > 0)
 		speed = std::min(speed + 4.0f, 5000.0f);
 	else if (wheelDelta < 0)
-		speed = (speed - 4.0f) > 1.0f ? (speed - 1.0f) : 1.0f;
+		speed = std::max(speed - 4.f, 1.0f);
 
 }
 
@@ -531,9 +531,10 @@ void DX12App::OnKeyboardInput(const GameTimer& gt)
 	mCamera.UpdateViewMatrix();
 }
 
-void DX12App::AnimateMaterials(const GameTimer& gt)
+void DX12App::AnimateObjects(const GameTimer& gt)
 {
-
+	XMStoreFloat4x4(&mAllRitems[3].get()->World, XMMatrixRotationY(cos(gt.TotalTime())) * XMMatrixTranslation(0.f, -5.f, 20.f));
+	mAllRitems[3].get()->NumFramesDirty = gNumFrameResources;
 }
 
 void DX12App::UpdateObjectCBs(const GameTimer& gt)
@@ -781,6 +782,7 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 {
 	XMMATRIX view = mCamera.GetView();
 	XMMATRIX proj = mCamera.GetProj();
+	static XMFLOAT3 prevPosW = mCamera.GetPosition3f();
 
 	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
 	static XMMATRIX prevViewProj = viewProj;
@@ -796,6 +798,7 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	XMStoreFloat4x4(&mMainPassCB.PrevViewProj, XMMatrixTranspose(prevViewProj));
 	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
 	mMainPassCB.EyePosW = mCamera.GetPosition3f();
+	mMainPassCB.PrevEyePosW = prevPosW;
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
 	mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
 	mMainPassCB.NearZ = 1.0f;
@@ -805,6 +808,7 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.currentFrame = currentFrame;
 
 	prevViewProj = viewProj;
+	prevPosW = mCamera.GetPosition3f();
 
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);

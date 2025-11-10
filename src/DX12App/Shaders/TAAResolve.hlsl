@@ -15,6 +15,8 @@ cbuffer cbPass : register(b0)
     float4x4 gInvViewProj;
     float3 gEyePosW;
     int gCurrentFrame;
+    float3 gPrevEyePosW;
+    float pad;
     float2 gRenderTargetSize;
     float2 gInvRenderTargetSize;
     float gNearZ;
@@ -51,12 +53,15 @@ float4 PS(VertexOut pin) : SV_Target
     float2 MotionVector = gVelocityBuf.Load(int3(TexelCoord, 0)).xy;
     float MotionLength = length(MotionVector);
     
+    //return float4(MotionVector, 0.f, 1.f);
+    
     float2 PrevTexelCoord = TexelCoord + MotionVector;
     float4 CurrFrameColor = gInputImage.Load(int3(TexelCoord, 0));
     
-    float4 PrevFrameColor = CurrFrameColor;
+    if (length(gEyePosW - gPrevEyePosW) > 0.f)
+        return CurrFrameColor;
     
-    //return lerp(CurrFrameColor, PrevFrameColor, 0.9f);
+    float4 PrevFrameColor = CurrFrameColor;
     
     bool IsPrevUVValid = all(PrevTexelCoord >= 0 && PrevTexelCoord < gRenderTargetSize);
     if (IsPrevUVValid)
