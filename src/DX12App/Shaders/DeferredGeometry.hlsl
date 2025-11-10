@@ -37,6 +37,29 @@ struct GBufferData
     float4 MaterialFresnelRoughness : SV_TARGET4;
 };
 
+float Halton(uint index, uint base)
+{
+    float f = 1.0f;
+    float result = 0.0f;
+    
+    while (index > 0)
+    {
+        f /= (float) base;
+        result += f * (float) (index % base);
+        index = (int) (floor((float) index / (float) base));
+    }
+    
+    return result;
+}
+
+float2 GenerateJitter(int frameIndex)
+{
+    return float2(
+        Halton((uint) frameIndex, 2),
+        Halton((uint) frameIndex, 3)
+    ) / gRenderTargetSize;
+}
+
 bool isVertexOnEdge(float2 TexC1, float2 TexC2)
 {
     float scale = 1e-3;
@@ -68,6 +91,8 @@ VertexOut VS(VertexIn vin)
     vo.Tangent = vin.Tangent;
     vo.PosW = mul(float4(vin.PosL, 1.0f), gWorld);
     vo.PosH = mul(vo.PosW, gViewProj);
+    vo.PosH.xy += GenerateJitter(gCurrentFrame) * vo.PosH.w;
+    
     vo.NormalL = vin.NormalL;
     vo.TexC = mul(float4(vin.TexC, 0.f, 1.f), gTexTransform).xy;
     

@@ -29,7 +29,7 @@ cbuffer cbPass : register(b0)
     float4x4 gViewProj;
     float4x4 gInvViewProj;
     float3 gEyePosW;
-    float cbPerObjectPad1;
+    int gCurrentFrame;
     float2 gRenderTargetSize;
     float2 gInvRenderTargetSize;
     float gNearZ;

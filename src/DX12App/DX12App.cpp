@@ -15,7 +15,7 @@ using namespace DirectX::PackedVector;
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "D3D12.lib")
 
-#define DEBUG_VIEW
+// #define DEBUG_VIEW
 // #define DEBUG
 
 const int gNumFrameResources = 3;
@@ -155,6 +155,8 @@ private:
 	std::vector<std::unique_ptr<FrameResource>> mFrameResources;
 	FrameResource* mCurrFrameResource = nullptr;
 	int mCurrFrameResourceIndex = 0;
+
+	UINT currentFrame = 0;
 
 	UINT mCbvSrvDescriptorSize = 0;
 
@@ -315,6 +317,8 @@ void DX12App::Update(const GameTimer& gt)
 	// Cycle through the circular frame resource array.
 	mCurrFrameResourceIndex = (mCurrFrameResourceIndex + 1) % gNumFrameResources;
 	mCurrFrameResource = mFrameResources[mCurrFrameResourceIndex].get();
+
+	currentFrame++;
 
 	// Has the GPU finished processing the commands of the current frame resource?
 	// If not, wait until the GPU has completed commands up to this fence point.
@@ -719,6 +723,7 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.FarZ = 100000.0f;
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
+	mMainPassCB.currentFrame = currentFrame;
 
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
