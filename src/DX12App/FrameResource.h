@@ -15,8 +15,25 @@ struct PostProcessSettings {
     float ChromaticDistanceScale;
 
     float EffectIntensity;
-    int EffectType;
-    float Padding[2];
+    float EffectType;
+    DirectX::XMFLOAT2 Padding;
+
+    DirectX::XMFLOAT3 BetaRayleigh;
+    float RayleighScaleHeight;
+    DirectX::XMFLOAT3 BetaMieSca;
+    float MieScaleHeight;
+    DirectX::XMFLOAT3 BetaMieExt;
+    float MieG;
+    DirectX::XMFLOAT3 SunDirection;
+    float SunIntensity;
+
+    float GroundLevelY;
+    float AtmosphereTopY;
+    float DensityScale;
+    float _pad0;
+
+    DirectX::XMFLOAT3 GroundAlbedo;
+    float _pad1;
 };
 
 struct ObjectConstants

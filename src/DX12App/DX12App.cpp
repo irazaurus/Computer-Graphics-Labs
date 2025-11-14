@@ -15,7 +15,7 @@ using namespace DirectX::PackedVector;
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "D3D12.lib")
 
-#define DEBUG_VIEW
+// #define DEBUG_VIEW
 // #define DEBUG
 
 const int gNumFrameResources = 3;
@@ -93,6 +93,21 @@ struct LightObject
 	ShadowMap* shadowMap;
 };
 
+struct AtmosphereSettings
+{
+	bool Enabled = true;
+	float Cleanliness = 1.0f;
+	float RayleighScaleHeight = 9200.f;
+	float MieScaleHeight = 1000.f;
+	float MieG = 0.9f;
+	float SunIntensity = 15.0f;
+	float GroundLevelY = -1000.0f;
+	float AtmosphereTopY = 110000.0f;
+	// 1.0f - realistic, but non-visible for small scenes
+	float DensityScale = 1.0f;
+} mAtm;
+
+
 class DX12App : public D3DApp
 {
 public:
@@ -115,6 +130,7 @@ private:
 	virtual void OnMouseWheel(WPARAM btnState)override;
 
 	void OnKeyboardInput(const GameTimer& gt);
+
 	void AnimateMaterials(const GameTimer& gt);
 	void UpdateObjectCBs(const GameTimer& gt);
 	void UpdateLightCBs(const GameTimer& gt);
@@ -141,6 +157,8 @@ private:
 	void DrawSkyBox();
 	void DrawPostProcess();
 	void DrawShadowMaps();
+
+	float SigmaRayleigh(float lambdaNm, float factor);
 
 	// Quad Tree for Terrain
 	Node* BuildNode(int layer, float x, float y, int xi, int yi);
@@ -369,7 +387,7 @@ void DX12App::Draw(const GameTimer& gt)
 
 	mGBuffer->TransitToLightsRenderingState(mCommandList);
 	DrawDeferredLights();
-	DrawSkyBox();
+	//DrawSkyBox();
 
 	mGBuffer->TransitToTonemappingState(mCommandList);
 	DrawPostProcess();
@@ -458,6 +476,21 @@ void DX12App::OnKeyboardInput(const GameTimer& gt)
 		mCamera.Strafe(mCamera.speed * dt);
 
 	mCamera.UpdateViewMatrix();
+
+	if (GetAsyncKeyState('P') & 0x8000)
+		mAtm.Cleanliness = mAtm.Cleanliness + 0.01f;
+	if (GetAsyncKeyState('O') & 0x8000)
+		mAtm.Cleanliness = mAtm.Cleanliness - 0.01f;
+
+	mAtm.Cleanliness = std::max(0.f, std::min(mAtm.Cleanliness, 2.0f));
+
+	std::string debugString = "Cleanliness : " + std::to_string(mAtm.Cleanliness) + "\n";
+	OutputDebugStringA(debugString.c_str());
+
+	if (GetAsyncKeyState('I') & 0x8000)
+		mAtm.DensityScale = mAtm.DensityScale + 0.01f;
+	if (GetAsyncKeyState('U') & 0x8000)
+		mAtm.DensityScale = mAtm.DensityScale - 0.01f;
 }
 
 void DX12App::AnimateMaterials(const GameTimer& gt)
@@ -680,8 +713,7 @@ void DX12App::UpdateMaterialCBs(const GameTimer& gt)
 
 void DX12App::UpdatePostProcessCB(const GameTimer& gt)
 {
-	auto currPostProcessCB = mCurrFrameResource->PostProcessCB.get();
-	PostProcessSettings postProcessSettings;
+	PostProcessSettings postProcessSettings{};
 
 	postProcessSettings.FocusDistance = 0.95f;
 	postProcessSettings.FocusRange = 0.1f;
@@ -691,8 +723,67 @@ void DX12App::UpdatePostProcessCB(const GameTimer& gt)
 	postProcessSettings.ChromaticIntensity = 2.0f;
 	postProcessSettings.ChromaticDistanceScale = 1.5f;
 	postProcessSettings.EffectIntensity = 0.0f;
-	postProcessSettings.EffectType = 0;
+	postProcessSettings.EffectType = 0.f;
 
+	const float pi = 3.14159265f;
+
+	// Air parameters
+
+	// Index of refraction
+	const float n = 1.0003f;
+	// Molecules per m^3
+	const float N = 2.687e25f;
+	// Depolarization factor
+	const float pn = 0.035f;
+
+	// Common factor before 1 / lambda^4
+	const float n2 = n * n;
+	const float delta2 = (n2 - 1.0f) * (n2 - 1.0f);
+	const float Fdelta = (6.0f + 3.0f * pn) / (6.0f - 7.0f * pn);
+	const float factor = (8.0f * pi * pi * pi * delta2 / (3.0f * N)) * Fdelta;
+
+	// RGB wavelengths (nm)
+	const float lambdaR = 650.0f;
+	const float lambdaG = 570.0f;
+	const float lambdaB = 475.0f;
+
+	postProcessSettings.BetaRayleigh = {
+		 SigmaRayleigh(lambdaR, factor),
+		 SigmaRayleigh(lambdaG, factor),
+		 SigmaRayleigh(lambdaB, factor)
+	};
+
+
+	// Cleanliness = 0  -> dirty air (a lot of Mie)
+	// Cleanliness = 2  -> clean air (less Mie)
+	float cleanliness = mAtm.Cleanliness;
+
+	// medium haze
+	const float betaMBase = 0.00001;
+	const float betaM = betaMBase * (2.0f - cleanliness);
+
+	// Let ~90% go into scattering, and the rest into absorption
+	postProcessSettings.BetaMieSca = { betaM * 0.9f, betaM * 0.9f, betaM * 0.9f };
+	postProcessSettings.BetaMieExt = { betaM,        betaM,        betaM };
+
+
+	postProcessSettings.RayleighScaleHeight = mAtm.RayleighScaleHeight;
+	postProcessSettings.MieScaleHeight = mAtm.MieScaleHeight;
+	postProcessSettings.MieG = mAtm.MieG;
+
+	// sunDir == DirectionalLight direction
+	XMFLOAT3 sunDir = mAllLights.at(0).get()->Direction;
+	postProcessSettings.SunDirection = { -sunDir.x, -sunDir.y, -sunDir.z };
+	postProcessSettings.SunIntensity = mAtm.SunIntensity;
+
+	postProcessSettings.GroundLevelY = mAtm.GroundLevelY;
+	postProcessSettings.AtmosphereTopY = mAtm.AtmosphereTopY;
+
+	postProcessSettings.DensityScale = mAtm.Enabled ? mAtm.DensityScale : 0.0f;
+
+	postProcessSettings.GroundAlbedo = { 0.1f, 0.1f, 0.1f };
+
+	auto currPostProcessCB = mCurrFrameResource->PostProcessCB.get();
 	currPostProcessCB->CopyData(0, postProcessSettings);
 }
 
@@ -716,7 +807,7 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
 	mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
 	mMainPassCB.NearZ = 1.0f;
-	mMainPassCB.FarZ = 100000.0f;
+	mMainPassCB.FarZ = mCamera.GetFarZ();
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
 
@@ -1728,6 +1819,10 @@ void DX12App::DrawPostProcess()
 	mCommandList->SetGraphicsRootConstantBufferView(10,
 		postProcessCB->GetGPUVirtualAddress()); // PostProcess Settings
 
+	auto mainCB = mCurrFrameResource->PassCB->Resource();
+	mCommandList->SetGraphicsRootConstantBufferView(11,
+		mainCB->GetGPUVirtualAddress()); // MainPass CB
+
 	mCommandList->SetPipelineState(mPSOs["PostProcessPSO"].Get());
 	mCommandList->DrawInstanced(3, 1, 0, 0);
 }
@@ -1775,6 +1870,15 @@ void DX12App::DrawShadowMaps()
 	}
 }
 
+float DX12App::SigmaRayleigh(float lambdaNm, float factor)
+{
+	// lambda to nanometers
+	const float lambda = lambdaNm * 1e-9f;
+	const float lambda2 = lambda * lambda;
+	const float lambda4 = lambda2 * lambda2;
+	return factor / lambda4;
+}
+
 Node* DX12App::BuildNode(int layer, float x, float y, int xi, int yi)
 {
 
@@ -1783,12 +1887,15 @@ Node* DX12App::BuildNode(int layer, float x, float y, int xi, int yi)
 
 	float scaleFactor = RootSize / ( 1 << layer );
 
+	// debug
 	std::string debugString = std::to_string(layer) + "_" + std::to_string(xi) + "_" + std::to_string(yi) + "\n";
 	OutputDebugStringA(debugString.c_str());
 
-	node->RItem = BuildRenderItem("grid", "terrain" + std::to_string(layer) + "_" + std::to_string(xi) + "_" + std::to_string(yi),
+	std::string name = "grid";
+	node->RItem = BuildRenderItem(name, "terrain" + std::to_string(layer) + "_" + std::to_string(xi) + "_" + std::to_string(yi),
 		XMMatrixScaling(scaleFactor, 1.0f, scaleFactor) * XMMatrixTranslation(x, -40.f, y),
 		nullptr, (int)RenderLayer::Terrain);
+	node->RItem->Geo->DrawArgs[name].Bounds.Transform(node->RItem->Bounds, XMMatrixScaling(scaleFactor, 1.0f, scaleFactor) * XMMatrixTranslation(x, 100.f, y));
 
 	if (layer > layers - 2)
 	{
