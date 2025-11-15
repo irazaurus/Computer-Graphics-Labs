@@ -200,7 +200,7 @@ AerialResult IntegrateAerial(float3 camPos, float tMax, float3 V)
         // In-Scattering (slide 7 in the formula to the right of the '+')
         float3 S = (phaseR * BetaRayleigh * dR + phaseM * BetaMieSca * dM) * SunIntensity * T_light;
 
-        // 
+        // Total light collected
         L += Absorption * S * dt;
         
         // Absorption (slide 5) - if expand the formula from the slide using a Taylor series, it becomes equivalent to the formula below (to the exponential) for small dt
@@ -243,26 +243,24 @@ float4 PS(VertexOut pin) : SV_Target
     // Normalized view vector
     float3 V = normalize(P_far - camPos);
 
-
-    // Maximum distance for integrating atmospheric scattering along the ray
-    float tMaxSky;
-
-    // If V.y > 0 -> the ray is directed upward (into the sky). Then the intersection point of the ray with the upper boundary of the atmosphere is computed as follows
-    if (V.y > 1e-6f)
-        tMaxSky = (AtmosphereTopY - camPos.y) / V.y;
-    // If V.y < 0, the ray is looking downward, toward the ground. Look for the intersection point with the lower boundary of the atmosphere
-    else if (V.y < -1e-6f)
-    {
-        float tGround = (GroundLevelY - camPos.y) / V.y;
-        tMaxSky = max(0.0f, tGround);
-    }
-    // If V.y ~ 0, the ray travels almost horizontally; it either does not intersect the atmosphere or will intersect it very far away. Therefore, a very large distance is assigned.
-    else
-        tMaxSky = 50000.0f;
-    
     
     if (isSky)
     {
+        float tMaxSky;
+
+        // If V.y > 0 -> the ray is directed upward (into the sky). Then the intersection point of the ray with the upper boundary of the atmosphere is computed as follows
+        if (V.y > 1e-6f)
+            tMaxSky = (AtmosphereTopY - camPos.y) / V.y;
+        // If V.y < 0, the ray is looking downward, toward the ground. Look for the intersection point with the lower boundary of the atmosphere
+        else if (V.y < -1e-6f)
+        {
+            float tGround = (GroundLevelY - camPos.y) / V.y;
+            tMaxSky = max(0.0f, tGround);
+        }
+        // If V.y ~ 0, the ray travels almost horizontally; it either does not intersect the atmosphere or will intersect it very far away. Therefore, a very large distance is assigned.
+        else
+            tMaxSky = 50000.0f;
+        
         // Ray marching
         AerialResult arSky = IntegrateAerial(camPos, tMaxSky, V);
         color.rgb = color.rgb * arSky.transmittance + arSky.inscatter;
@@ -282,7 +280,7 @@ float4 PS(VertexOut pin) : SV_Target
         float fogEndDepth = 0.95f;
         float fogFactor = saturate((depth - fogStartDepth) / max(1e-3f, fogEndDepth - fogStartDepth));
     
-        float fogIntensity = 1.0f;
+        float fogIntensity = 10.0f;
 
         float3 fogAdd = arGeo.inscatter * fogIntensity;
     

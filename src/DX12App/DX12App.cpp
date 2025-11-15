@@ -103,7 +103,6 @@ struct AtmosphereSettings
 	float SunIntensity = 15.0f;
 	float GroundLevelY = -1000.0f;
 	float AtmosphereTopY = 110000.0f;
-	// 1.0f - realistic, but non-visible for small scenes
 	float DensityScale = 1.0f;
 } mAtm;
 
@@ -484,13 +483,23 @@ void DX12App::OnKeyboardInput(const GameTimer& gt)
 
 	mAtm.Cleanliness = std::max(0.f, std::min(mAtm.Cleanliness, 2.0f));
 
-	std::string debugString = "Cleanliness : " + std::to_string(mAtm.Cleanliness) + "\n";
-	OutputDebugStringA(debugString.c_str());
+	/*std::string debugString = "Cleanliness : " + std::to_string(mAtm.Cleanliness) + "\n";
+	OutputDebugStringA(debugString.c_str());*/
 
 	if (GetAsyncKeyState('I') & 0x8000)
 		mAtm.DensityScale = mAtm.DensityScale + 0.01f;
 	if (GetAsyncKeyState('U') & 0x8000)
 		mAtm.DensityScale = mAtm.DensityScale - 0.01f;
+
+	if (GetAsyncKeyState('H') & 0x8000)
+		mAtm.RayleighScaleHeight = mAtm.RayleighScaleHeight + 100.0f;
+	if (GetAsyncKeyState('J') & 0x8000)
+		mAtm.RayleighScaleHeight = mAtm.RayleighScaleHeight - 100.0f;
+
+	if (GetAsyncKeyState('K') & 0x8000)
+		mAtm.MieScaleHeight = mAtm.MieScaleHeight + 100.0f;
+	if (GetAsyncKeyState('L') & 0x8000)
+		mAtm.MieScaleHeight = mAtm.MieScaleHeight - 100.0f;
 }
 
 void DX12App::AnimateMaterials(const GameTimer& gt)
@@ -754,8 +763,8 @@ void DX12App::UpdatePostProcessCB(const GameTimer& gt)
 	};
 
 
-	// Cleanliness = 0  -> dirty air (a lot of Mie)
-	// Cleanliness = 2  -> clean air (less Mie)
+	// Cleanliness = 0  -> dirty air
+	// Cleanliness = 2  -> clean air
 	float cleanliness = mAtm.Cleanliness;
 
 	// medium haze
