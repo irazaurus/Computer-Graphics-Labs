@@ -182,6 +182,83 @@ struct MeshGeometry
 		VertexBufferUploader = nullptr;
 		IndexBufferUploader = nullptr;
 	}
+
+	//BLAS
+	Microsoft::WRL::ComPtr<ID3D12Resource> BLASResource;
+	Microsoft::WRL::ComPtr<ID3D12Resource> ScratchResource;
+
+	UINT GetTotalVertexCount() const
+	{
+		if (VertexByteStride == 0) return 0;
+		return VertexBufferByteSize / VertexByteStride;
+	}
+
+	UINT GetTotalIndexCount() const
+	{
+		if (IndexFormat == DXGI_FORMAT_R16_UINT) return IndexBufferByteSize / sizeof(uint16_t);
+		else if (IndexFormat == DXGI_FORMAT_R32_UINT) return IndexBufferByteSize / sizeof(uint32_t);
+		return 0;
+	}
+
+	void BuildBLAS(Microsoft::WRL::ComPtr<ID3D12Device5> device, Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList4>& cmdList, bool IsOpaque = true)
+	{
+
+		D3D12_RAYTRACING_GEOMETRY_DESC geometry;
+		geometry.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+		geometry.Triangles.VertexBuffer.StartAddress = VertexBufferGPU->GetGPUVirtualAddress();
+		geometry.Triangles.VertexBuffer.StrideInBytes = VertexByteStride;
+		geometry.Triangles.VertexCount = GetTotalVertexCount();
+		geometry.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+		geometry.Triangles.IndexBuffer = IndexBufferGPU->GetGPUVirtualAddress();
+		geometry.Triangles.IndexFormat = IndexFormat;
+		geometry.Triangles.IndexCount = GetTotalIndexCount();
+		geometry.Triangles.Transform3x4 = 0;
+		geometry.Flags = IsOpaque ? D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE : D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
+
+		// Describe the bottom-level acceleration structure inputs.
+		D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS ASInputs;
+		ASInputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+		ASInputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+		ASInputs.pGeometryDescs = &geometry;
+		ASInputs.NumDescs = 1;
+		ASInputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+
+		D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO ASBuildInfo;
+		device->GetRaytracingAccelerationStructurePrebuildInfo(&ASInputs, &ASBuildInfo);
+
+		auto blasDesc = CD3DX12_RESOURCE_DESC::Buffer(
+			ASBuildInfo.ResultDataMaxSizeInBytes,
+			D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+
+		device->CreateCommittedResource(
+			&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+			D3D12_HEAP_FLAG_NONE,
+			&blasDesc,
+			D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+			nullptr,
+			IID_PPV_ARGS(&BLASResource));
+
+		// Scratch resource
+		auto scratchDesc = CD3DX12_RESOURCE_DESC::Buffer(
+			ASBuildInfo.ScratchDataSizeInBytes,
+			D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+
+		device->CreateCommittedResource(
+			&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+			D3D12_HEAP_FLAG_NONE,
+			&scratchDesc,
+			D3D12_RESOURCE_STATE_COMMON,
+			nullptr,
+			IID_PPV_ARGS(&ScratchResource));
+
+		D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC desc = {};
+		desc.Inputs = ASInputs;
+		desc.ScratchAccelerationStructureData = ScratchResource->GetGPUVirtualAddress();
+		desc.DestAccelerationStructureData = BLASResource->GetGPUVirtualAddress();
+
+		cmdList->BuildRaytracingAccelerationStructure(&desc, 0, nullptr); // Builds on GPU
+	}
+
 };
 
 enum struct LightType
