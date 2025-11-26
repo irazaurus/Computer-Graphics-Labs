@@ -205,7 +205,7 @@ struct MeshGeometry
 
 		D3D12_RAYTRACING_GEOMETRY_DESC geometry;
 		geometry.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-		geometry.Triangles.VertexBuffer.StartAddress = VertexBufferGPU->GetGPUVirtualAddress();
+		geometry.Triangles.VertexBuffer.StartAddress = VertexBufferGPU->GetGPUVirtualAddress() + 12; // +12 to use position
 		geometry.Triangles.VertexBuffer.StrideInBytes = VertexByteStride;
 		geometry.Triangles.VertexCount = GetTotalVertexCount();
 		geometry.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
