@@ -109,39 +109,57 @@ float3 RestoreWorldPosition(float2 UV, float depth)
     return viewPos.xyz;
 }
 
-// calculates shadow factor for shadow mapping
-float CalcShadowFactor(float4 posW, int cascadeID)
+float CalcRTShadow(uint2 TexelCoord)
 {
-    float4 shadowPosH = mul(posW, LShadowTransform[cascadeID]);
-    
-    // Complete projection by doing division by w.
-    shadowPosH.xyz /= shadowPosH.w;
-
-    // Depth in NDC space.
-    float depth = shadowPosH.z;
-
-    uint width, height, numMips, numLayers;
-    gShadowMap.GetDimensions(0, width, height, numLayers, numMips);
-
-    // Texel size.
-    float dx = 1.0f / (float) width;
-
-    float percentLit = 0.0f;
-    const float2 offsets[9] =
+    //blur depth map
+    static const float Kernel[41] =
     {
-        float2(-dx, -dx), float2(0.0f, -dx), float2(dx, -dx),
-        float2(-dx, 0.0f), float2(0.0f, 0.0f), float2(dx, 0.0f),
-        float2(-dx, +dx), float2(0.0f, +dx), float2(dx, +dx)
+        0.0000000000000000, 0.0000000000000001, 0.0000000000000052,
+        0.0000000000001253, 0.0000000000021519, 0.0000000000278349,
+        0.0000000002747260, 0.0000000021644900, 0.0000000137540400,
+        0.0000000724616000, 0.0000003141800000, 0.0000011379900000,
+        0.0000035235800000, 0.0000093477300000, 0.0000215682000000,
+        0.0000438293000000, 0.0000791458000000, 0.0001280230000000,
+        0.0001872210000000, 0.0002499590000000, 0.0003068310000000,
+        0.0003479390000000, 0.0003655270000000, 0.0003561520000000,
+        0.0003214440000000, 0.0002675280000000, 0.0002036640000000,
+        0.0001402560000000, 0.0000861180000000, 0.0000469990000000,
+        0.0000224910000000, 0.0000094450000000, 0.0000034450000000,
+        0.0000010740000000, 0.0000002830000000, 0.0000000620000000,
+        0.0000000110000000, 0.0000000020000000, 0.0000000000000000,
+        0.0000000000000000, 0.0000000000000000
     };
-
+    
+    float blurStrength = 1.0f;
+    
+    float result = 0.0f;
+    float kernelSum = 0.0f;
+    
     [unroll]
-    for (int i = 0; i < 9; ++i)
+    for (int x = -20; x <= 20; x++)
     {
-        percentLit += gShadowMap.SampleCmpLevelZero(gsamShadow,
-            float3(shadowPosH.xy + offsets[i], cascadeID), depth).r;
+        [unroll]
+        for (int y = -20; y <= 20; y++)
+        {
+            float2 offset = float2(x, y) / gRenderTargetSize * blurStrength;
+            uint2 sampleCoord = TexelCoord + uint2(offset * gRenderTargetSize);
+            
+            if (sampleCoord.x < gRenderTargetSize.x && sampleCoord.y < gRenderTargetSize.y)
+            {
+                float kernelValue = Kernel[x + 20] * Kernel[y + 20];
+                float sampleValue = gShadowMap.Load(int4(sampleCoord, 0, 0)).x;
+                result += sampleValue * kernelValue;
+                kernelSum += kernelValue;
+            }
+        }
     }
     
-    return percentLit / 9.0f;
+    if (kernelSum > 0.0f)
+    {
+        result /= kernelSum;
+    }
+    
+    return result;
 }
 
 struct VertexIn
@@ -207,15 +225,8 @@ float4 PS(VertexOut vo) : SV_Target
     
     if (LightType == 0) // direction
         {
-        for (uint cascade = 0; cascade < 4; cascade++)
-        {
-            float factor = CalcShadowFactor(float4(posW, 1.0f), cascade);
-            if (factor < 0.3f)
-            {
-                shadowFactor = factor;
-                break;
-            }
-        }
+        
+        shadowFactor = CalcRTShadow(pixelC);
         
         float3 lightDir = normalize(-light.Direction);
         float3 halfVec = normalize(toEyeW + lightDir);
@@ -259,12 +270,12 @@ float4 PS(VertexOut vo) : SV_Target
             else
                 faceIndex = (lightToPixel.z > 0) ? 4 : 5;
             
-            shadowFactor = CalcShadowFactor(float4(posW, 1.0f), faceIndex);
+            shadowFactor = CalcRTShadow(pixelC);
             currentLight = float4(ComputePointLight(light, mat, posW, normal, toEyeW) * shadowFactor, 1.0f);
     } 
     else // spot
         {
-            shadowFactor = CalcShadowFactor(float4(posW, 1.0f), 0);
+            shadowFactor = CalcRTShadow(pixelC);
             currentLight = float4(ComputeSpotLight(light, mat, posW, normal, toEyeW) * shadowFactor, 1.0f);
         }
     

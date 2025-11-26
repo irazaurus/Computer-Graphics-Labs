@@ -332,6 +332,9 @@ void DX12App::OnResize()
 		md3dDevice->CopyDescriptorsSimple(mGBuffer->NumBuffers, srvGBuffer,
 			mGBuffer->m_SRVDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
 			D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+		for (auto& light : mAllLights)
+			light->shadowMap->OnResize(mClientWidth, mClientHeight);
 	}
 }
 
@@ -387,14 +390,14 @@ void DX12App::Draw(const GameTimer& gt)
 	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
 	mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
-	DrawShadowMaps();
-
 	mGBuffer->TransitToOpaqueRenderingState(mCommandList);
 	mGBuffer->ClearRTVs(mCommandList);
 
 	DrawDeferredGeometry();
 
 	mGBuffer->TransitToLightsRenderingState(mCommandList);
+
+	DrawShadowMaps();
 	DrawDeferredLights();
 	DrawSkyBox();
 
@@ -1052,6 +1055,10 @@ void DX12App::BuildShadersAndInputLayout()
 	mShaders["deferredLightsPS"] = DXCCompileShader(L"Shaders\\DeferredLights.hlsl", nullptr, "PS", L"ps_6_7");
 	mShaders["deferredLightsGeometryVS"] = DXCCompileShader(L"Shaders\\DeferredLights.hlsl", nullptr, "LightsGeometryVS", L"vs_6_7");
 	mShaders["deferredAmbientPS"] = DXCCompileShader(L"Shaders\\DeferredLights.hlsl", nullptr, "AmbientPS", L"ps_6_7");
+
+	mShaders["RTLightsVS"] = DXCCompileShader(L"Shaders\\RTLights.hlsl", nullptr, "VS", L"vs_6_7");
+	mShaders["RTLightsGeometryVS"] = DXCCompileShader(L"Shaders\\RTLights.hlsl", nullptr, "LightsGeometryVS", L"vs_6_7");
+	mShaders["RTLightsPS"] = DXCCompileShader(L"Shaders\\RTLights.hlsl", nullptr, "PS", L"ps_6_7");
 	
 	mShaders["postVS"] = DXCCompileShader(L"Shaders\\PostProcessing.hlsl", nullptr, "VS", L"vs_6_7");
 	mShaders["postPS"] = DXCCompileShader(L"Shaders\\PostProcessing.hlsl", nullptr, "PS", L"ps_6_7");
@@ -1418,6 +1425,49 @@ void DX12App::BuildPSOs()
 	psoDesc.SampleDesc.Quality = 0;
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&mPSOs["PostProcessPSO"])));
+
+
+	//
+	// PSO for Ray Traced lights
+	//
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC RTSSPSODesc = {};
+	RTSSPSODesc.InputLayout = { nullptr, 0 };
+	RTSSPSODesc.pRootSignature = mRootSignature["default"].Get();
+	RTSSPSODesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	RTSSPSODesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	RTSSPSODesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	RTSSPSODesc.DSVFormat = mDepthStencilFormat;
+	RTSSPSODesc.SampleMask = UINT_MAX;
+	RTSSPSODesc.SampleDesc.Count = 1;
+	RTSSPSODesc.RasterizerState.DepthBias = 1000;
+	RTSSPSODesc.RasterizerState.DepthBiasClamp = 0.0f;
+	RTSSPSODesc.RasterizerState.SlopeScaledDepthBias = 1.0f;
+	RTSSPSODesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	RTSSPSODesc.VS =
+	{
+	 reinterpret_cast<BYTE*>(mShaders["RTLightsVS"]->GetBufferPointer()),
+	 mShaders["RTLightsVS"]->GetBufferSize()
+	};
+	RTSSPSODesc.PS =
+	{
+	 reinterpret_cast<BYTE*>(mShaders["RTLightsPS"]->GetBufferPointer()),
+	 mShaders["RTLightsPS"]->GetBufferSize()
+	};
+	RTSSPSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+
+	RTSSPSODesc.NumRenderTargets = 0;
+	RTSSPSODesc.RTVFormats[0] = DXGI_FORMAT_UNKNOWN;
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&RTSSPSODesc, IID_PPV_ARGS(&mPSOs["RTLights"])));
+
+	RTSSPSODesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
+	RTSSPSODesc.VS =
+	{
+	 reinterpret_cast<BYTE*>(mShaders["RTLightsGeometryVS"]->GetBufferPointer()),
+	 mShaders["RTLightsGeometryVS"]->GetBufferSize()
+	};
+
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&RTSSPSODesc, IID_PPV_ARGS(&mPSOs["RTLightsGeometry"])));
+
 }
 
 void DX12App::BuildFrameResources()
@@ -1541,7 +1591,7 @@ void DX12App::BuildRenderItems()
 {
 	BuildRenderItem("box", "sky", XMMatrixIdentity(), nullptr, (int) RenderLayer::Sky, 5000.0f);
 
-	//BuildRenderItem("box", "bricks0", XMMatrixTranslation(15.f, 0.f, 0.f), nullptr);
+	BuildRenderItem("box", "bricks0", XMMatrixScaling(100.f, 1.f, 100.f) * XMMatrixTranslation(0.f, -10.f, 0.f), nullptr);
 	BuildRenderItem("trex", "trex", XMMatrixTranslation(40.f, -5.f, -60.f), nullptr, 0, 2.f);
 
 	std::vector<std::string> BaryonyxLODs = {"Baryonyx", "box"};
@@ -1564,7 +1614,7 @@ void DX12App::BuildLightObjects()
 {
 	auto dir1 = std::make_unique<LightObject>();
 	dir1->LightType = LightType::Directional;
-	dir1->Strength = { 1.f, 1.f, 1.f };
+	dir1->Strength = { 2.f, 2.f, 2.f };
 	dir1->Direction = { 0.57735f, -0.57735f, 0.57735f };
 	mAllLights.push_back(std::move(dir1));
 	
@@ -1606,7 +1656,7 @@ void DX12App::BuildLightObjects()
 		}
 
 		mAllLights.at(i)->lightCBIndex = i;
-		mAllLights.at(i)->shadowMap = new ShadowMap(md3dDevice.Get(), 2048, 2048);
+		mAllLights.at(i)->shadowMap = new ShadowMap(md3dDevice.Get(), mClientWidth, mClientHeight);
 
 		mAllLights.at(i)->shadowMap->BuildDescriptors(
 			CD3DX12_CPU_DESCRIPTOR_HANDLE(srvCpuStart, mShadowMapHeapIndex + i, mCbvSrvUavDescriptorSize),
@@ -1709,9 +1759,10 @@ void DX12App::DrawDeferredGeometry()
 	mCommandList->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	DrawRenderItems(mCommandList.Get(), mVisibleRitems[(int)RenderLayer::Opaque]);
 
+	
 	// terrain w/ tessellation draw
-	mCommandList->SetPipelineState(mPSOs["terrainGeometry"].Get());
-	DrawRenderItems(mCommandList.Get(), mVisibleTerrain);
+	/*mCommandList->SetPipelineState(mPSOs["terrainGeometry"].Get());
+	DrawRenderItems(mCommandList.Get(), mVisibleTerrain);*/
 	
 	for (int i = 0; i < (int)RenderLayer::Count; i++)
 	{
@@ -1851,15 +1902,31 @@ void DX12App::DrawShadowMaps()
 	UINT lightCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(LightConstants));
 	auto lightCB = mCurrFrameResource->LightCB->Resource();
 
-	mCommandList->SetGraphicsRootConstantBufferView(11, passCB->GetGPUVirtualAddress());
+	mCommandList->SetGraphicsRootConstantBufferView(10, passCB->GetGPUVirtualAddress());
 	mCommandList->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	mCommandList->SetPipelineState(mPSOs["shadow_opaque"].Get());
+
+	// zw
+	mCommandList->SetGraphicsRootDescriptorTable(0, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+		mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+		mGBuffer->Channel0SRVHeapIndex + 1,
+		mCbvSrvDescriptorSize
+	));
+	// normal
+	mCommandList->SetGraphicsRootDescriptorTable(1, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+		mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+		mGBuffer->Channel0SRVHeapIndex + 2,
+		mCbvSrvDescriptorSize
+	));
+	// TLAS
+	mCommandList->SetGraphicsRootDescriptorTable(2, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+		mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+		mTLASSRVHeapIndex,
+		mCbvSrvDescriptorSize
+	));
 
 	for (auto &Light : mAllLights)
 	{
 		auto shadowMap = Light->shadowMap;
-		mCommandList->RSSetViewports(1, &shadowMap->Viewport());
-		mCommandList->RSSetScissorRects(1, &shadowMap->ScissorRect());
 
 		// Transition render target to dsv
 		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
@@ -1874,9 +1941,25 @@ void DX12App::DrawShadowMaps()
 
 
 		D3D12_GPU_VIRTUAL_ADDRESS lightCBAddress = lightCB->GetGPUVirtualAddress() + Light->lightCBIndex * lightCBByteSize;
-		mCommandList->SetGraphicsRootConstantBufferView(13, lightCBAddress);
+		mCommandList->SetGraphicsRootConstantBufferView(11, lightCBAddress);
 
-		DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Opaque]);
+
+		if (Light->LightType == LightType::Directional)
+		{
+			mCommandList->SetPipelineState(mPSOs["RTLights"].Get());
+			mCommandList->DrawInstanced(6, 1, 0, 0);
+		}
+		else
+		{
+			mCommandList->SetPipelineState(mPSOs["RTLightsGeometry"].Get());
+
+			mCommandList->IASetVertexBuffers(0, 1, &mGeometries[Light->GeoName]->VertexBufferView());
+			mCommandList->IASetIndexBuffer(&mGeometries[Light->GeoName]->IndexBufferView());
+
+			mCommandList->DrawIndexedInstanced(mGeometries[Light->GeoName]->DrawArgs[Light->GeoName].IndexCount, 1,
+				mGeometries[Light->GeoName]->DrawArgs[Light->GeoName].StartIndexLocation,
+				mGeometries[Light->GeoName]->DrawArgs[Light->GeoName].BaseVertexLocation, 0);
+		}
 
 		// Transition dsv to rtv
 		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
