@@ -19,7 +19,7 @@ using namespace DirectX::PackedVector;
 
 // #define DEBUG_VIEW
 // #define DEBUG
-#define SHADERS_DIR LR"(C:\Users\NB.PRO\Desktop\ITMO\Í„\d3d12book\im so fcking tired of this shit x3\Computer-Graphics-Labs\src\DX12App\Shaders)"
+#define SHADERS_DIR LR"(Shaders)"
 
 const int gNumFrameResources = 3;
 
