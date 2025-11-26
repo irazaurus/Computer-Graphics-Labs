@@ -152,6 +152,7 @@ private:
 	// rt
 	void BuildBLASForGeometries();
 	void BuildTLAS();
+	void RefitTLAS();
 
 	// Quad Tree for Terrain
 	Node* BuildNode(int layer, float x, float y, int xi, int yi);
@@ -357,6 +358,7 @@ void DX12App::Update(const GameTimer& gt)
 	}
 
 	AnimateMaterials(gt);
+	//RefitTLAS();
 	UpdateObjectCBs(gt);
 	UpdateVisibleTerrainTiles();
 	UpdateLightCBs(gt);
@@ -2110,6 +2112,89 @@ void DX12App::BuildTLAS()
 
 	md3dDevice->CreateShaderResourceView(nullptr, &srvDesc, srvHandle);
 }
+
+void DX12App::RefitTLAS()
+{
+	//Might require FlushCommandQueue() call, but it eats fps. A lot.
+	ThrowIfFailed(mCommandList->Reset(mDirectCmdListAlloc.Get(), nullptr));
+
+	std::vector<std::pair<Microsoft::WRL::ComPtr<ID3D12Resource>, DirectX::XMMATRIX>> instances;
+
+	for (auto& ri : mAllRitems) {
+		if (ri->Geo && ri->Geo->BLASResource) {
+			DirectX::XMMATRIX worldMatrix = DirectX::XMLoadFloat4x4(&ri->World);
+
+			if (true)
+				instances.emplace_back(ri->Geo->BLASResource, worldMatrix);
+			else
+				instances.emplace_back(mGeometries[ri->LODGeoNames[ri->currentLOD]]->BLASResource, worldMatrix);
+		}
+	}
+
+	UINT InstanceCount = static_cast<UINT>(instances.size());
+
+	if (InstanceCount == 0) {
+		OutputDebugStringA("RebuildTLAS: No instances found\n");
+		return;
+	}
+
+	std::vector<D3D12_RAYTRACING_INSTANCE_DESC> instanceDescs(InstanceCount);
+
+	for (UINT i = 0; i < InstanceCount; ++i) {
+		D3D12_RAYTRACING_INSTANCE_DESC& desc = instanceDescs[i];
+		desc.InstanceID = i;
+		desc.InstanceContributionToHitGroupIndex = 0;
+		desc.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
+		desc.AccelerationStructure = instances[i].first->GetGPUVirtualAddress();
+
+		DirectX::XMMATRIX worldMatrix = instances[i].second;
+		DirectX::XMFLOAT3X4 transform3x4;
+		DirectX::XMStoreFloat3x4(&transform3x4, worldMatrix);
+		memcpy(desc.Transform, &transform3x4, sizeof(desc.Transform));
+
+		desc.InstanceMask = 0xFF;
+	}
+
+	UINT instanceDescsSize = InstanceCount * sizeof(D3D12_RAYTRACING_INSTANCE_DESC);
+
+	void* pData;
+	ThrowIfFailed(mInstanceDescsUploadResource->Map(0, nullptr, &pData));
+	memcpy(pData, instanceDescs.data(), instanceDescsSize);
+	mInstanceDescsUploadResource->Unmap(0, nullptr);
+
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+		mInstanceDescsResource.Get(),
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		D3D12_RESOURCE_STATE_COPY_DEST));
+
+	mCommandList->CopyResource(mInstanceDescsResource.Get(), mInstanceDescsUploadResource.Get());
+
+	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+		mInstanceDescsResource.Get(),
+		D3D12_RESOURCE_STATE_COPY_DEST,
+		D3D12_RESOURCE_STATE_GENERIC_READ));
+
+	D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {};
+	buildDesc.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+	buildDesc.Inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+	buildDesc.Inputs.InstanceDescs = mInstanceDescsResource->GetGPUVirtualAddress();
+	buildDesc.Inputs.NumDescs = InstanceCount;
+	buildDesc.Inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
+
+	buildDesc.ScratchAccelerationStructureData = mTLASScratchResource->GetGPUVirtualAddress();
+	buildDesc.DestAccelerationStructureData = mTLASResource->GetGPUVirtualAddress();
+	buildDesc.SourceAccelerationStructureData = mTLASResource->GetGPUVirtualAddress();
+
+	mCommandList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+
+	auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(mTLASResource.Get());
+	mCommandList->ResourceBarrier(1, &barrier);
+
+	ThrowIfFailed(mCommandList->Close());
+	ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
+	mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
+}
+
 
 Node* DX12App::BuildNode(int layer, float x, float y, int xi, int yi)
 {

@@ -126,7 +126,7 @@ psout PS(VertexOut pin)
     }
     
     float shadowFactor = 1.0f;
-    float rayJitter = 0.01f;
+    float rayJitter = screenDepth * 0.005f;
     
     // RayTrace based on light type
     if (LightType == 0) // Directional Light
