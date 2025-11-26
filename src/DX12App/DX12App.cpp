@@ -1071,39 +1071,31 @@ void DX12App::BuildShapeGeometry()
 	std::vector<GeometryGenerator::MeshData> allMeshData;
 
 	// if you want to generate new model -- generate it here
-	allMeshData.push_back( geoGen.CreateGrid(1.0f, 1.0f, 128, 128, 1.0f) );           // grid
-	allMeshData.push_back( geoGen.CreateBox(10.0f, 10.0f, 10.0f, 3) );                // box
-	allMeshData.push_back( geoGen.LoadModel("..\\Models\\trex.obj"));             // trex
-	allMeshData.push_back( geoGen.LoadModel("..\\Models\\Baryonyx.obj"));         // baryonyx
-	allMeshData.push_back( geoGen.CreateCone(1.f, 3.f, 20, 20) );					  // cone for spot
-	allMeshData.push_back( geoGen.CreateSphere(1.f, 20, 20) );					      // sphere for point
+	allMeshData.push_back(geoGen.CreateGrid(1.0f, 1.0f, 128, 128, 1.0f));           // grid
+	allMeshData.push_back(geoGen.CreateBox(10.0f, 10.0f, 10.0f, 3));                // box
+	allMeshData.push_back(geoGen.LoadModel("..\\Models\\trex.obj"));             // trex
+	allMeshData.push_back(geoGen.LoadModel("..\\Models\\Baryonyx.obj"));         // baryonyx
+	allMeshData.push_back(geoGen.CreateCone(1.f, 3.f, 20, 20));       // cone for spot
+	allMeshData.push_back(geoGen.CreateSphere(1.f, 20, 20));           // sphere for point
 
-	// 
-	// We are concatenating all the geometry into one big vertex/index buffer.  So
-	// define the regions in the buffer each submesh covers.
-	//
+	// NOOO
+	std::vector<std::string> geometryNames = {
+	 "grid",
+	 "box",
+	 "trex",
+	 "Baryonyx",
+	 "cone",
+	 "sphere"
+	};
 
-	// Cache the vertex offsets to each object in the concatenated vertex and index buffer.
-	std::vector<UINT> vertexOffsets;
-	vertexOffsets.push_back(0);
-	std::vector<UINT> indexOffsets;
-	indexOffsets.push_back(0);
-	for (size_t i = 1; i < allMeshData.size(); i++)
+	for (size_t meshIndex = 0; meshIndex < allMeshData.size(); meshIndex++)
 	{
-		vertexOffsets.push_back(vertexOffsets.at(i - 1) + (UINT) allMeshData.at(i - 1).Vertices.size());
-		indexOffsets.push_back(indexOffsets.at(i - 1) + (UINT) allMeshData.at(i - 1).Indices32.size());
-	}
-	
-	// generating submeshes
-	size_t totalVertexCount = 0;
-	std::vector<SubmeshGeometry> allSubmeshes;
-	for (size_t i = 0; i < allMeshData.size(); i++)
-	{
+		auto& mesh = allMeshData[meshIndex];
+
 		SubmeshGeometry submesh;
-		auto& mesh = allMeshData.at(i);
 		submesh.IndexCount = (UINT)mesh.Indices32.size();
-		submesh.StartIndexLocation = indexOffsets.at(i);
-		submesh.BaseVertexLocation = vertexOffsets.at(i);
+		submesh.StartIndexLocation = 0;
+		submesh.BaseVertexLocation = 0;
 
 		XMFLOAT3 vMin = { FLT_MAX, FLT_MAX, FLT_MAX };
 		XMFLOAT3 vMax = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
@@ -1120,7 +1112,6 @@ void DX12App::BuildShapeGeometry()
 			vMax.z = std::max(vMax.z, vertex.Position.z);
 		}
 
-		// generating bounding box
 		XMFLOAT3 center = {
 		  0.5f * (vMin.x + vMax.x),
 		  0.5f * (vMin.y + vMax.y),
@@ -1135,56 +1126,43 @@ void DX12App::BuildShapeGeometry()
 		BoundingBox box(center, extents);
 		submesh.Bounds = box;
 
-		allSubmeshes.push_back(submesh);
-		totalVertexCount += mesh.Vertices.size();
-	}
-
-	// pack the vertices of all the meshes into one vertex buffer
-	std::vector<Vertex> vertices(totalVertexCount);
-	UINT k = 0;
-	for (GeometryGenerator::MeshData mesh : allMeshData) {
-		for (size_t i = 0; i < mesh.Vertices.size(); ++i, ++k)
+		std::vector<Vertex> vertices(mesh.Vertices.size());
+		for (size_t i = 0; i < mesh.Vertices.size(); ++i)
 		{
-			vertices[k].Tangent = mesh.Vertices[i].TangentU;
-			vertices[k].Pos = mesh.Vertices[i].Position;
-			vertices[k].Normal = mesh.Vertices[i].Normal;
-			vertices[k].TexC = mesh.Vertices[i].TexC;
+			vertices[i].Tangent = mesh.Vertices[i].TangentU;
+			vertices[i].Pos = mesh.Vertices[i].Position;
+			vertices[i].Normal = mesh.Vertices[i].Normal;
+			vertices[i].TexC = mesh.Vertices[i].TexC;
 		}
+
+		std::vector<std::uint16_t> indices = mesh.GetIndices16();
+
+		const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
+		const UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
+
+		auto geo = std::make_unique<MeshGeometry>();
+		geo->Name = geometryNames[meshIndex];
+		ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
+		CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
+
+		ThrowIfFailed(D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU));
+		CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices.data(), ibByteSize);
+
+		geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+			mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
+
+		geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+			mCommandList.Get(), indices.data(), ibByteSize, geo->IndexBufferUploader);
+
+		geo->VertexByteStride = sizeof(Vertex);
+		geo->VertexBufferByteSize = vbByteSize;
+		geo->IndexFormat = DXGI_FORMAT_R16_UINT;
+		geo->IndexBufferByteSize = ibByteSize;
+
+		geo->DrawArgs[geometryNames[meshIndex]] = submesh;
+
+		mGeometries[geo->Name] = std::move(geo);
 	}
-
-	std::vector<std::uint16_t> indices;
-	for (GeometryGenerator::MeshData mesh : allMeshData)
-		indices.insert(indices.end(), std::begin(mesh.GetIndices16()), std::end(mesh.GetIndices16()));
-
-	const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
-	const UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
-
-	auto geo = std::make_unique<MeshGeometry>();
-	geo->Name = "shapeGeo";
-
-	ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
-	CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
-
-	ThrowIfFailed(D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU));
-	CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices.data(), ibByteSize);
-
-	geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
-		mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
-
-	geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
-		mCommandList.Get(), indices.data(), ibByteSize, geo->IndexBufferUploader);
-
-	geo->VertexByteStride = sizeof(Vertex);
-	geo->VertexBufferByteSize = vbByteSize;
-	geo->IndexFormat = DXGI_FORMAT_R16_UINT;
-	geo->IndexBufferByteSize = ibByteSize;
-
-	for (size_t i = 0; i < allMeshData.size(); i++)
-	{
-		geo->DrawArgs[allMeshData.at(i).name] = allSubmeshes.at(i);
-	}
-
-	mGeometries[geo->Name] = std::move(geo);
 }
 
 void DX12App::BuildPSOs()
@@ -1542,7 +1520,7 @@ RenderItem* DX12App::BuildRenderItem(std::string name, std::string material, XMM
 	XMStoreFloat4x4(&ptr->TexTransform, XMMatrixScaling(scaleTex, scaleTex, scaleTex));
 	ptr->ObjCBIndex = ObjCBIndex++;
 	ptr->Mat = mMaterials[material].get();
-	ptr->Geo = mGeometries["shapeGeo"].get();
+	ptr->Geo = mGeometries[name].get();
 	ptr->geoName = name;
 	ptr->IndexCount = ptr->Geo->DrawArgs[name].IndexCount;
 	ptr->Geo->DrawArgs[name].Bounds.Transform(ptr->Bounds, XMLoadFloat4x4(&ptr->World));
@@ -1562,7 +1540,6 @@ RenderItem* DX12App::BuildRenderItem(std::string name, std::string material, XMM
 void DX12App::BuildRenderItems()
 {
 	BuildRenderItem("box", "sky", XMMatrixIdentity(), nullptr, (int) RenderLayer::Sky, 5000.0f);
-	BuildRenderItem("quad", "bricks0", XMMatrixIdentity(), nullptr, (int)RenderLayer::Debug);
 
 	//BuildRenderItem("box", "bricks0", XMMatrixTranslation(15.f, 0.f, 0.f), nullptr);
 	BuildRenderItem("trex", "trex", XMMatrixTranslation(40.f, -5.f, -60.f), nullptr, 0, 2.f);
@@ -1678,9 +1655,6 @@ void DX12App::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vec
 		);
 		cmdList->SetGraphicsRootDescriptorTable(2, texHandle2);
 
-		cmdList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
-		cmdList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
-
 
 		D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
 		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
@@ -1689,15 +1663,23 @@ void DX12App::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vec
 		cmdList->SetGraphicsRootConstantBufferView(12, matCBAddress);
 
 		if (ri->LODGeoNames.empty())
+		{
+			cmdList->IASetVertexBuffers(0, 1, &ri->Geo->VertexBufferView());
+			cmdList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
 			cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
+		}
 		else if (ri->currentLOD < ri->LODGeoNames.size())
 		{
-			auto &item = ri->Geo->DrawArgs[ri->LODGeoNames.at(ri->currentLOD)];
+			auto &item = mGeometries[ri->LODGeoNames.at(ri->currentLOD)]->DrawArgs[ri->LODGeoNames.at(ri->currentLOD)];
+			cmdList->IASetVertexBuffers(0, 1, &mGeometries[ri->LODGeoNames.at(ri->currentLOD)]->VertexBufferView());
+			cmdList->IASetIndexBuffer(&mGeometries[ri->LODGeoNames.at(ri->currentLOD)]->IndexBufferView());
 			cmdList->DrawIndexedInstanced(item.IndexCount, 1, item.StartIndexLocation, item.BaseVertexLocation, 0);
 		}
 		else
 		{
-			auto& item = ri->Geo->DrawArgs[ri->LODGeoNames.back()];
+			auto& item = mGeometries[ri->LODGeoNames.back()]->DrawArgs[ri->LODGeoNames.back()];
+			cmdList->IASetVertexBuffers(0, 1, &mGeometries[ri->LODGeoNames.back()]->VertexBufferView());
+			cmdList->IASetIndexBuffer(&mGeometries[ri->LODGeoNames.back()]->IndexBufferView());
 			cmdList->DrawIndexedInstanced(item.IndexCount, 1, item.StartIndexLocation, item.BaseVertexLocation, 0);
 		}
 	}
@@ -1802,12 +1784,12 @@ void DX12App::DrawDeferredLights()
 		{
 			mCommandList->SetPipelineState(mPSOs["deferredLightsGeometry"].Get());
 
-			mCommandList->IASetVertexBuffers(0, 1, &mGeometries["shapeGeo"]->VertexBufferView());
-			mCommandList->IASetIndexBuffer(&mGeometries["shapeGeo"]->IndexBufferView());
+			mCommandList->IASetVertexBuffers(0, 1, &mGeometries[Light->GeoName]->VertexBufferView());
+			mCommandList->IASetIndexBuffer(&mGeometries[Light->GeoName]->IndexBufferView());
 
-			mCommandList->DrawIndexedInstanced(mGeometries["shapeGeo"]->DrawArgs[Light->GeoName].IndexCount, 1,
-				mGeometries["shapeGeo"]->DrawArgs[Light->GeoName].StartIndexLocation,
-				mGeometries["shapeGeo"]->DrawArgs[Light->GeoName].BaseVertexLocation, 0);
+			mCommandList->DrawIndexedInstanced(mGeometries[Light->GeoName]->DrawArgs[Light->GeoName].IndexCount, 1,
+				mGeometries[Light->GeoName]->DrawArgs[Light->GeoName].StartIndexLocation,
+				mGeometries[Light->GeoName]->DrawArgs[Light->GeoName].BaseVertexLocation, 0);
 		}
 	}
 
