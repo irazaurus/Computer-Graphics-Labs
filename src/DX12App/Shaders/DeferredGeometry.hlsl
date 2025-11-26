@@ -41,29 +41,6 @@ struct GBufferData
     float2 VelocityBuf : SV_TARGET5;
 };
 
-float Halton(uint index, uint base)
-{
-    float f = 1.0f;
-    float result = 0.0f;
-    
-    while (index > 0)
-    {
-        f /= (float) base;
-        result += f * (float) (index % base);
-        index = (int) (floor((float) index / (float) base));
-    }
-    
-    return result;
-}
-
-float2 GenerateJitter(int frameIndex)
-{
-    return float2(
-        Halton((uint) frameIndex, 2),
-        Halton((uint) frameIndex, 3)
-    ) / gRenderTargetSize;
-}
-
 bool isVertexOnEdge(float2 TexC1, float2 TexC2)
 {
     float scale = 1e-3;
@@ -100,7 +77,7 @@ VertexOut VS(VertexIn vin)
     vo.PrevPosW = mul(float4(vin.PosL, 1.0f), gPrevWorld);
     vo.PrevPosHNoJitter = mul(vo.PrevPosW, gPrevViewProj);
     
-    vo.PosH.xy += GenerateJitter(gCurrentFrame) * vo.PosH.w;
+    vo.PosH.xy += gJitterOffset * vo.PosH.w;
     
     vo.NormalL = vin.NormalL;
     vo.TexC = mul(float4(vin.TexC, 0.f, 1.f), gTexTransform).xy;
@@ -128,7 +105,7 @@ VertexOut displaceVS(VertexIn vin)
     vo.PosHNoJitter = vo.PosH;
     vo.PrevPosHNoJitter = mul(vo.PrevPosW, gPrevViewProj);
     
-    vo.PosH.xy += GenerateJitter(gCurrentFrame) * vo.PosH.w;
+    vo.PosH.xy += gJitterOffset * vo.PosH.w;
     return vo;
 }
 
@@ -209,7 +186,7 @@ VertexOut DS(PatchTess patchTess,
     dout.PosHNoJitter = dout.PosH;
     dout.PrevPosHNoJitter = mul(dout.PrevPosW, gPrevViewProj);
     
-    dout.PosH.xy += GenerateJitter(gCurrentFrame) * dout.PosH.w;
+    dout.PosH.xy += gJitterOffset * dout.PosH.w;
     
     dout.NormalL = norm;
     dout.Tangent = tri[0].Tangent;

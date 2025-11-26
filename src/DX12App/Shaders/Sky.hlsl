@@ -37,6 +37,9 @@ cbuffer cbPass : register(b1)
     float gFarZ;
     float gTotalTime;
     float gDeltaTime;
+    float2 gJitterOffset;
+    float pad;
+    float pad2;
 };
 
 struct VertexIn

@@ -158,6 +158,9 @@ private:
 	void UpdateVisibleTerrainTiles();
 	void ChooseVisibleTerrainTile(Node* node);
 
+	// TAA
+	float Halton(uint32_t index, uint32_t base);
+
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 7> GetStaticSamplers();
 
 private:
@@ -804,6 +807,7 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
 	mMainPassCB.currentFrame = currentFrame;
+	mMainPassCB.JitterOffset = { Halton(currentFrame, 2) / (float)mClientWidth, Halton(currentFrame, 3) / (float)mClientHeight };
 
 	prevViewProj = viewProj;
 
@@ -2058,6 +2062,21 @@ void DX12App::ChooseVisibleTerrainTile(Node* node)
 			ChooseVisibleTerrainTile(chold);
 		}
 	}
+}
+
+float DX12App::Halton(uint32_t index, uint32_t base)
+{
+	float f = 1.0f;
+	float result = 0.0f;
+
+	while (index > 0)
+	{
+		f /= static_cast<float>(base);
+		result += f * static_cast<float>(index % base);
+		index = static_cast<uint32_t>(floorf(static_cast<float>(index) / static_cast<float>(base)));
+	}
+
+	return result;
 }
 
 std::array<const CD3DX12_STATIC_SAMPLER_DESC, 7> DX12App::GetStaticSamplers()
