@@ -99,6 +99,8 @@ float4 PS(VertexOut pin) : SV_Target
         return color;
     
     float depth = gDepthMap.Load(int3(pixelC, 0)).w;
+    float4 blurred;
+    float4 chromatic;
     
     switch (gEffectType)
     {
@@ -111,8 +113,8 @@ float4 PS(VertexOut pin) : SV_Target
                       gEffectIntensity);
             
         case 2: // Combined
-            float4 blurred = LensBlur(pin.TexC, depth);
-            float4 chromatic = ChromaticAberration(pin.TexC, gChromaticIntensity, gChromaticDirection);
+            blurred = LensBlur(pin.TexC, depth);
+            chromatic = ChromaticAberration(pin.TexC, gChromaticIntensity, gChromaticDirection);
             return lerp(color, lerp(blurred, chromatic, 0.5f), gEffectIntensity);
             
         default:

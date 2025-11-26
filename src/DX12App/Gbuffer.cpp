@@ -217,7 +217,7 @@ Gbuffer::Gbuffer(int width, int height, Microsoft::WRL::ComPtr<ID3D12Device> dev
     md3dDevice = device;
 }
 
-void Gbuffer::TransitToOpaqueRenderingState(ComPtr<ID3D12GraphicsCommandList>& cmdList)
+void Gbuffer::TransitToOpaqueRenderingState(ComPtr<ID3D12GraphicsCommandList4>& cmdList)
 {
     CD3DX12_RESOURCE_BARRIER barriers[7];
     barriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -254,7 +254,7 @@ void Gbuffer::TransitToOpaqueRenderingState(ComPtr<ID3D12GraphicsCommandList>& c
     cmdList->ResourceBarrier(7, barriers);
 }
 
-void Gbuffer::TransitToLightsRenderingState(ComPtr<ID3D12GraphicsCommandList>& cmdList)
+void Gbuffer::TransitToLightsRenderingState(ComPtr<ID3D12GraphicsCommandList4>& cmdList)
 {
     CD3DX12_RESOURCE_BARRIER barriers[5];
     barriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -280,7 +280,7 @@ void Gbuffer::TransitToLightsRenderingState(ComPtr<ID3D12GraphicsCommandList>& c
     cmdList->ResourceBarrier(5, barriers);
 }
 
-void Gbuffer::TransitToTonemappingState(ComPtr<ID3D12GraphicsCommandList>& cmdList)
+void Gbuffer::TransitToTonemappingState(ComPtr<ID3D12GraphicsCommandList4>& cmdList)
 {
     CD3DX12_RESOURCE_BARRIER barriers[2];
     barriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -294,7 +294,7 @@ void Gbuffer::TransitToTonemappingState(ComPtr<ID3D12GraphicsCommandList>& cmdLi
     cmdList->ResourceBarrier(2, barriers);
 }
 
-void Gbuffer::TransitToCommon(ComPtr<ID3D12GraphicsCommandList>& cmdList)
+void Gbuffer::TransitToCommon(ComPtr<ID3D12GraphicsCommandList4>& cmdList)
 {
     CD3DX12_RESOURCE_BARRIER barriers[7];
     barriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -328,7 +328,7 @@ void Gbuffer::TransitToCommon(ComPtr<ID3D12GraphicsCommandList>& cmdList)
     cmdList->ResourceBarrier(7, barriers);
 }
 
-void Gbuffer::TransitFromRenderTargetToCommon(ComPtr<ID3D12GraphicsCommandList>& cmdList)
+void Gbuffer::TransitFromRenderTargetToCommon(ComPtr<ID3D12GraphicsCommandList4>& cmdList)
 {
     CD3DX12_RESOURCE_BARRIER barriers[5];
     barriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -354,7 +354,7 @@ void Gbuffer::TransitFromRenderTargetToCommon(ComPtr<ID3D12GraphicsCommandList>&
     cmdList->ResourceBarrier(5, barriers);
 }
 
-void Gbuffer::TransitFromShaderResourceToCommon(ComPtr<ID3D12GraphicsCommandList>& cmdList)
+void Gbuffer::TransitFromShaderResourceToCommon(ComPtr<ID3D12GraphicsCommandList4>& cmdList)
 {
     CD3DX12_RESOURCE_BARRIER barriers[7];
     barriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -388,7 +388,7 @@ void Gbuffer::TransitFromShaderResourceToCommon(ComPtr<ID3D12GraphicsCommandList
     cmdList->ResourceBarrier(7, barriers);
 }
 
-void Gbuffer::ClearRTVs(ComPtr<ID3D12GraphicsCommandList>& cmdList)
+void Gbuffer::ClearRTVs(ComPtr<ID3D12GraphicsCommandList4>& cmdList)
 {
     const FLOAT clearColor[] = { 0.0f, 0.0f, 0.0f, 1.0f };
     cmdList->ClearRenderTargetView(DiffuseRTV, clearColor, 0, nullptr);

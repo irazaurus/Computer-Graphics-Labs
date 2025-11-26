@@ -7,6 +7,8 @@
 #include "../Common/Camera.h"
 #include "FrameResource.h"
 #include "ShadowMap.h"
+#include "../libs/Dxil/inc/dxil/dxcapi.h"
+#include "../libs/Dxil/inc/dxil/d3d12shader.h"
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
@@ -15,8 +17,9 @@ using namespace DirectX::PackedVector;
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "D3D12.lib")
 
-#define DEBUG_VIEW
+// #define DEBUG_VIEW
 // #define DEBUG
+#define SHADERS_DIR LR"(C:\Users\NB.PRO\Desktop\ITMO\Í„\d3d12book\im so fcking tired of this shit x3\Computer-Graphics-Labs\src\DX12App\Shaders)"
 
 const int gNumFrameResources = 3;
 
@@ -114,6 +117,9 @@ private:
 	virtual void OnMouseMove(WPARAM btnState, int x, int y)override;
 	virtual void OnMouseWheel(WPARAM btnState)override;
 
+	void InitializeShadersCompiler();
+	ComPtr<ID3DBlob> DXCCompileShader(const std::wstring& filename, const D3D_SHADER_MACRO* defines, const std::string& entrypoint, const std::wstring& target);
+
 	void OnKeyboardInput(const GameTimer& gt);
 	void AnimateMaterials(const GameTimer& gt);
 	void UpdateObjectCBs(const GameTimer& gt);
@@ -151,6 +157,11 @@ private:
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 7> GetStaticSamplers();
 
 private:
+
+	// compiler propetries
+	ComPtr<IDxcCompiler3> mDxcCompiler;
+	ComPtr<IDxcUtils> mDxcUtils;
+	ComPtr<IDxcIncludeHandler> mDxcIncludeHandler;
 
 	std::vector<std::unique_ptr<FrameResource>> mFrameResources;
 	FrameResource* mCurrFrameResource = nullptr;
@@ -243,6 +254,8 @@ bool DX12App::Initialize()
 	mCamera.SetPosition(-30.0f, 70.0f, -20.0f);
 	mCamera.Pitch(-5.3f);
 	mCamera.RotateY(0.7f);
+
+	InitializeShadersCompiler();
 
 	LoadTextures();
 	LoadTerrainTextures();
@@ -439,6 +452,107 @@ void DX12App::OnMouseWheel(WPARAM btnState)
 	else if (wheelDelta < 0)
 		speed = (speed - 4.0f) > 1.0f ? (speed - 1.0f) : 1.0f;
 
+}
+
+void DX12App::InitializeShadersCompiler()
+{
+	ThrowIfFailed(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&mDxcUtils)));
+	ThrowIfFailed(DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&mDxcCompiler)));
+	ThrowIfFailed(mDxcUtils->CreateDefaultIncludeHandler(&mDxcIncludeHandler));
+}
+
+ComPtr<ID3DBlob> DX12App::DXCCompileShader(const std::wstring& filename, const D3D_SHADER_MACRO* defines, const std::string& entrypoint, const std::wstring& target)
+{
+	ComPtr<IDxcBlobEncoding> sourceBlob;
+	ThrowIfFailed(mDxcUtils->LoadFile(filename.c_str(), nullptr, &sourceBlob));
+
+	std::vector<LPCWSTR> arguments;
+	std::vector<std::wstring> storage;
+
+	arguments.push_back(L"-E");
+	std::wstring entrypointW(entrypoint.begin(), entrypoint.end());
+	arguments.push_back(entrypointW.c_str());
+
+	arguments.push_back(L"-T");
+	arguments.push_back(target.c_str());
+
+	arguments.push_back(L"-I");
+	arguments.push_back(SHADERS_DIR);
+
+	arguments.push_back(L"-I");
+	arguments.push_back(L"./");
+
+	arguments.push_back(L"-I");
+	arguments.push_back(L"../");
+
+	arguments.push_back(L"-O3"); // max optimization otherwise
+
+	if (defines)
+	{
+		const D3D_SHADER_MACRO* define = defines;
+		while (define->Name && define->Definition)
+		{
+			std::string defineStr = std::string(define->Name) + "=" + define->Definition;
+			arguments.push_back(L"-D");
+			std::wstring defineWide(defineStr.begin(), defineStr.end());
+			storage.push_back(defineWide);
+			arguments.push_back(storage.back().c_str());
+
+			define++;
+		}
+	}
+
+	DxcBuffer sourceBuffer;
+	sourceBuffer.Ptr = sourceBlob->GetBufferPointer();
+	sourceBuffer.Size = sourceBlob->GetBufferSize();
+	sourceBuffer.Encoding = DXC_CP_UTF8;
+
+	ComPtr<IDxcResult> results;
+	HRESULT hr = mDxcCompiler->Compile(
+		&sourceBuffer,
+		arguments.data(),
+		(UINT32)arguments.size(),
+		mDxcIncludeHandler.Get(),
+		IID_PPV_ARGS(&results));
+
+	ComPtr<IDxcBlobUtf8> errors;
+	if (SUCCEEDED(hr)) results->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errors), nullptr);
+
+	if (errors != nullptr && errors->GetStringLength() > 0)
+	{
+		//print a bunch of info if shader doesnt want to compile
+		OutputDebugStringA("Shader compilation warnings/errors:\n");
+		OutputDebugStringA(errors->GetStringPointer());
+
+		if (errors->GetStringLength() > 0) {
+			OutputDebugStringA("\n=== Shader Compilation Details ===\n");
+			OutputDebugStringA(("Shader: " + std::string(filename.begin(), filename.end()) + "\n").c_str());
+			OutputDebugStringA(("Entry point: " + entrypoint + "\n").c_str());
+			OutputDebugStringA(("Target: " + std::string(target.begin(), target.end()) + "\n").c_str());
+		}
+	}
+
+	ComPtr<IDxcBlobUtf16> outputName;
+	HRESULT compileStatus;
+	if (SUCCEEDED(results->GetStatus(&compileStatus)) && FAILED(compileStatus))
+	{
+		if (errors != nullptr && errors->GetStringLength() > 0)
+		{
+			OutputDebugStringA("Shader compilation failed:\n");
+			OutputDebugStringA(errors->GetStringPointer());
+		}
+		ThrowIfFailed(compileStatus);
+	}
+
+	//IDxcBlob to ID3DBlob conversion because im lazy to convert everything to IDxcBlob
+	ComPtr<IDxcBlob> dxcBlob;
+	ThrowIfFailed(results->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&dxcBlob), &outputName));
+
+	ComPtr<ID3DBlob> d3dBlob;
+	D3DCreateBlob(dxcBlob->GetBufferSize(), &d3dBlob);
+	memcpy(d3dBlob->GetBufferPointer(), dxcBlob->GetBufferPointer(), dxcBlob->GetBufferSize());
+
+	return d3dBlob;
 }
 
 void DX12App::OnKeyboardInput(const GameTimer& gt)
@@ -902,30 +1016,30 @@ void DX12App::BuildShadersAndInputLayout()
 		NULL, NULL
 	};
 
-	mShaders["deferredVS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "VS", "vs_5_0");
-	mShaders["displaceVS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "displaceVS", "vs_5_0");
-	mShaders["tessVS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "tessVS", "vs_5_0");
-	mShaders["tessHS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "HS", "hs_5_0");
-	mShaders["tessDS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "DS", "ds_5_0");
-	mShaders["curtainsGS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "curtainsGS", "gs_5_0");
-	mShaders["deferredPS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "DeferredPS", "ps_5_0");
-	mShaders["originalNormalPS"] = d3dUtil::CompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "OriginalNormalPS", "ps_5_0");
+	mShaders["deferredVS"] = DXCCompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "VS", L"vs_6_7");
+	mShaders["displaceVS"] = DXCCompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "displaceVS", L"vs_6_7");
+	mShaders["tessVS"] = DXCCompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "tessVS", L"vs_6_7");
+	mShaders["tessHS"] = DXCCompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "HS", L"hs_6_7");
+	mShaders["tessDS"] = DXCCompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "DS", L"ds_6_7");
+	mShaders["curtainsGS"] = DXCCompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "curtainsGS", L"gs_6_7");
+	mShaders["deferredPS"] = DXCCompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "DeferredPS", L"ps_6_7");
+	mShaders["originalNormalPS"] = DXCCompileShader(L"Shaders\\DeferredGeometry.hlsl", nullptr, "OriginalNormalPS", L"ps_6_7");
 	
-	mShaders["shadowVS"] = d3dUtil::CompileShader(L"Shaders\\Shadows.hlsl", nullptr, "VS", "vs_5_1");
-	mShaders["shadowGS"] = d3dUtil::CompileShader(L"Shaders\\Shadows.hlsl", nullptr, "GS", "gs_5_1");
-	mShaders["shadowOpaquePS"] = d3dUtil::CompileShader(L"Shaders\\Shadows.hlsl", nullptr, "PS", "ps_5_1");
-	mShaders["shadowAlphaTestedPS"] = d3dUtil::CompileShader(L"Shaders\\Shadows.hlsl", alphaTestDefines, "PS", "ps_5_1");
+	mShaders["shadowVS"] = DXCCompileShader(L"Shaders\\Shadows.hlsl", nullptr, "VS", L"vs_6_7");
+	mShaders["shadowGS"] = DXCCompileShader(L"Shaders\\Shadows.hlsl", nullptr, "GS", L"gs_6_7");
+	mShaders["shadowOpaquePS"] = DXCCompileShader(L"Shaders\\Shadows.hlsl", nullptr, "PS", L"ps_6_7");
+	mShaders["shadowAlphaTestedPS"] = DXCCompileShader(L"Shaders\\Shadows.hlsl", alphaTestDefines, "PS", L"ps_6_7");
 
-	mShaders["skyVS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "VS", "vs_5_1");
-	mShaders["skyPS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "PS", "ps_5_1");
+	mShaders["skyVS"] = DXCCompileShader(L"Shaders\\Sky.hlsl", nullptr, "VS", L"vs_6_7");
+	mShaders["skyPS"] = DXCCompileShader(L"Shaders\\Sky.hlsl", nullptr, "PS", L"ps_6_7");
 
-	mShaders["deferredLightsVS"] = d3dUtil::CompileShader(L"Shaders\\DeferredLights.hlsl", nullptr, "VS", "vs_5_1");
-	mShaders["deferredLightsPS"] = d3dUtil::CompileShader(L"Shaders\\DeferredLights.hlsl", nullptr, "PS", "ps_5_1");
-	mShaders["deferredLightsGeometryVS"] = d3dUtil::CompileShader(L"Shaders\\DeferredLights.hlsl", nullptr, "LightsGeometryVS", "vs_5_1");
-	mShaders["deferredAmbientPS"] = d3dUtil::CompileShader(L"Shaders\\DeferredLights.hlsl", nullptr, "AmbientPS", "ps_5_1");
+	mShaders["deferredLightsVS"] = DXCCompileShader(L"Shaders\\DeferredLights.hlsl", nullptr, "VS", L"vs_6_7");
+	mShaders["deferredLightsPS"] = DXCCompileShader(L"Shaders\\DeferredLights.hlsl", nullptr, "PS", L"ps_6_7");
+	mShaders["deferredLightsGeometryVS"] = DXCCompileShader(L"Shaders\\DeferredLights.hlsl", nullptr, "LightsGeometryVS", L"vs_6_7");
+	mShaders["deferredAmbientPS"] = DXCCompileShader(L"Shaders\\DeferredLights.hlsl", nullptr, "AmbientPS", L"ps_6_7");
 	
-	mShaders["postVS"] = d3dUtil::CompileShader(L"Shaders\\PostProcessing.hlsl", nullptr, "VS", "vs_5_0");
-	mShaders["postPS"] = d3dUtil::CompileShader(L"Shaders\\PostProcessing.hlsl", nullptr, "PS", "ps_5_0");
+	mShaders["postVS"] = DXCCompileShader(L"Shaders\\PostProcessing.hlsl", nullptr, "VS", L"vs_6_7");
+	mShaders["postPS"] = DXCCompileShader(L"Shaders\\PostProcessing.hlsl", nullptr, "PS", L"ps_6_7");
 
 	mInputLayout =
 	{
@@ -1784,7 +1898,7 @@ Node* DX12App::BuildNode(int layer, float x, float y, int xi, int yi)
 	float scaleFactor = RootSize / ( 1 << layer );
 
 	std::string debugString = std::to_string(layer) + "_" + std::to_string(xi) + "_" + std::to_string(yi) + "\n";
-	OutputDebugStringA(debugString.c_str());
+	//OutputDebugStringA(debugString.c_str());
 
 	node->RItem = BuildRenderItem("grid", "terrain" + std::to_string(layer) + "_" + std::to_string(xi) + "_" + std::to_string(yi),
 		XMMatrixScaling(scaleFactor, 1.0f, scaleFactor) * XMMatrixTranslation(x, -40.f, y),
