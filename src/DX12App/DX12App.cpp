@@ -1593,13 +1593,13 @@ void DX12App::BuildRenderItems()
 {
 	BuildRenderItem("box", "sky", XMMatrixIdentity(), nullptr, (int) RenderLayer::Sky, 5000.0f);
 
-	BuildRenderItem("box", "bricks0", XMMatrixScaling(100.f, 1.f, 100.f) * XMMatrixTranslation(0.f, -10.f, 0.f), nullptr);
+	BuildRenderItem("box", "bricks0", XMMatrixScaling(100.f, 1.f, 100.f) * XMMatrixTranslation(0.f, -10.f, 0.f), nullptr, 0, 1.f, 10.f);
 	BuildRenderItem("trex", "trex", XMMatrixTranslation(40.f, -5.f, -60.f), nullptr, 0, 2.f);
 
 	std::vector<std::string> BaryonyxLODs = {"Baryonyx", "box"};
-	BuildRenderItem("Baryonyx", "gorg", XMMatrixTranslation(0.f, -5.f, 20.f), &BaryonyxLODs);
-	BuildRenderItem("Baryonyx", "gorg", XMMatrixTranslation(-30.f, -5.f, 40.f), &BaryonyxLODs);
-	BuildRenderItem("Baryonyx", "gorg", XMMatrixTranslation(30.f, -5.f, 0.f), &BaryonyxLODs);
+	BuildRenderItem("Baryonyx", "gorg", XMMatrixTranslation(0.f, -5.f, 20.f), nullptr);
+	BuildRenderItem("Baryonyx", "gorg", XMMatrixTranslation(-30.f, -5.f, 40.f), nullptr);
+	BuildRenderItem("Baryonyx", "gorg", XMMatrixTranslation(30.f, -5.f, 0.f), nullptr);
 
 	float spacing = 7.f;
 	for (int i = 0; i < 11; i++)

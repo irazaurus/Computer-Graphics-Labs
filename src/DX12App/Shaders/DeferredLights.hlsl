@@ -124,7 +124,7 @@ float CalcRTShadow(uint2 TexelCoord)
         0.0000000000000000
     };
     
-    float blurStrength = 1.0f;
+    float blurStrength = 2.0f;
     
     float result = 0.0f;
     float kernelSum = 0.0f;

@@ -126,7 +126,14 @@ psout PS(VertexOut pin)
     }
     
     float shadowFactor = 1.0f;
-    float rayJitter = screenDepth * 0.005f;
+    //Scaling jitter by distance from camera(cant use depth since its 0.9999 most of the time(DAMN YOU FARZ)(or depthbias idk))
+    float DistanceToCamera = length(WorldPos - gEyePosW);
+    float MaxJitterDistance = 50.0f;
+    float MinJitterDistance = 10.0f;
+
+    float distanceFactor = saturate((DistanceToCamera - MinJitterDistance) / (MaxJitterDistance - MinJitterDistance));
+    float rayJitter = 0.005f * distanceFactor;
+
     
     // RayTrace based on light type
     if (LightType == 0) // Directional Light
@@ -160,7 +167,11 @@ psout PS(VertexOut pin)
     {
         float3 toLight = light.Position - WorldPos;
         float distanceToLight = length(toLight);
-        float3 lightDir = toLight / distanceToLight;
+        float3 lightDir = normalize(toLight / distanceToLight + float3(
+            (frac(sin(dot(UV, float2(23.456, 89.012))) * 43758.5453) - 0.5f) * rayJitter,
+            (frac(sin(dot(UV, float2(56.789, 34.567))) * 43758.5453) - 0.5f) * rayJitter,
+            (frac(sin(dot(UV, float2(90.123, 67.890))) * 43758.5453) - 0.5f) * rayJitter
+        ));
         
         float3 rayOrigin = WorldPos + Normal * 0.1f;
         
