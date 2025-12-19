@@ -44,7 +44,8 @@ struct PassConstants
     float TotalTime = 0.0f;
     float DeltaTime = 0.0f;
     DirectX::XMFLOAT2 JitterOffset = { 0.0f, 0.0f };
-    float pad;
+    DirectX::XMFLOAT2 pad1;
+    DirectX::XMFLOAT3 PrevEyePosW = { 0.0f, 0.0f, 0.0f };
     float pad2;
 };
 

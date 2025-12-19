@@ -214,6 +214,8 @@ private:
 	int mPrevFrameSRVHeapIndex = 0;
 	int mResolvedAccBufferSRVHeapIndex = 0;
 	int mResolvedAccBufferRTVHeapIndex = SwapChainBufferCount + 1;
+
+	bool bTAAEnabled = true;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
@@ -395,7 +397,7 @@ void DX12App::Update(const GameTimer& gt)
 		CloseHandle(eventHandle);
 	}
 
-	AnimateObjects(gt);
+	//AnimateObjects(gt);
 	UpdateObjectCBs(gt);
 	UpdateVisibleTerrainTiles();
 	UpdateLightCBs(gt);
@@ -530,6 +532,18 @@ void DX12App::OnKeyboardInput(const GameTimer& gt)
 
 	if (GetAsyncKeyState('D') & 0x8000)
 		mCamera.Strafe(mCamera.speed * dt);
+
+	static bool keyXPressed = false;
+	if (GetAsyncKeyState('X') & 0x8000)
+	{
+		if (!keyXPressed)
+		{
+			bTAAEnabled = !bTAAEnabled;
+			keyXPressed = true;
+			OutputDebugStringA(bTAAEnabled ? "TAA Enabled\n" : "TAA Disabled\n");
+		}
+	}
+	else keyXPressed = false;
 
 	mCamera.UpdateViewMatrix();
 }
@@ -788,6 +802,7 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 
 	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
 	static XMMATRIX prevViewProj = viewProj;
+	static XMFLOAT3 prevCameraPos = mCamera.GetPosition3f();
 	XMMATRIX invView = XMMatrixInverse(&XMMatrixDeterminant(view), view);
 	XMMATRIX invProj = XMMatrixInverse(&XMMatrixDeterminant(proj), proj);
 	XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(viewProj), viewProj);
@@ -800,6 +815,7 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	XMStoreFloat4x4(&mMainPassCB.PrevViewProj, XMMatrixTranspose(prevViewProj));
 	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
 	mMainPassCB.EyePosW = mCamera.GetPosition3f();
+	mMainPassCB.PrevEyePosW = prevCameraPos;
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
 	mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
 	mMainPassCB.NearZ = 1.0f;
@@ -807,9 +823,12 @@ void DX12App::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
 	mMainPassCB.currentFrame = currentFrame;
-	mMainPassCB.JitterOffset = { Halton(currentFrame, 2) / (float)mClientWidth, Halton(currentFrame, 3) / (float)mClientHeight };
+
+	if (bTAAEnabled) mMainPassCB.JitterOffset = { Halton(currentFrame, 2) / (float)mClientWidth, Halton(currentFrame, 3) / (float)mClientHeight };
+	else mMainPassCB.JitterOffset = { 0, 0 };
 
 	prevViewProj = viewProj;
+	prevCameraPos = mCamera.GetPosition3f();
 
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
@@ -1822,14 +1841,14 @@ void DX12App::DrawSkyBox()
 
 void DX12App::DrawPostProcess()
 {
-	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mTAAResolvedAccBuffer.Get(),
+	if (bTAAEnabled) mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mTAAResolvedAccBuffer.Get(),
 		D3D12_RESOURCE_STATE_COMMON,
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 
 	// register input texture
 	CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(
 		mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
-		mResolvedAccBufferSRVHeapIndex,
+		bTAAEnabled ? mResolvedAccBufferSRVHeapIndex : mGBuffer->Channel0SRVHeapIndex + 6,
 		mCbvSrvDescriptorSize
 	);
 	mCommandList->SetGraphicsRootDescriptorTable(0, texHandle);
@@ -1861,7 +1880,7 @@ void DX12App::DrawPostProcess()
 	mCommandList->DrawInstanced(3, 1, 0, 0);
 
 
-	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mTAAResolvedAccBuffer.Get(),
+	if (bTAAEnabled) mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(mTAAResolvedAccBuffer.Get(),
 		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 		D3D12_RESOURCE_STATE_COMMON));
 }
@@ -2076,7 +2095,7 @@ float DX12App::Halton(uint32_t index, uint32_t base)
 		index = static_cast<uint32_t>(floorf(static_cast<float>(index) / static_cast<float>(base)));
 	}
 
-	return result;
+	return result * 2;
 }
 
 std::array<const CD3DX12_STATIC_SAMPLER_DESC, 7> DX12App::GetStaticSamplers()

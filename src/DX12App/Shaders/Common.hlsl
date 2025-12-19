@@ -33,7 +33,8 @@ cbuffer cbPass : register(b1)
     float gTotalTime;
     float gDeltaTime;
     float2 gJitterOffset;
-    float pad;
+    float2 pad;
+    float3 PrevCameraPos;
     float pad2;
 };
 

@@ -22,7 +22,8 @@ cbuffer cbPass : register(b0)
     float gTotalTime;
     float gDeltaTime;
     float2 gJitterOffset;
-    float pad;
+    float2 pad;
+    float3 PrevCameraPos;
     float pad2;
 };
 
@@ -57,6 +58,10 @@ float4 PS(VertexOut pin) : SV_Target
     
     float2 PrevTexelCoord = TexelCoord + MotionVector;
     float4 CurrFrameColor = gInputImage.Load(int3(TexelCoord, 0));
+    if (length(gEyePosW - PrevCameraPos) > 0.001f)
+    {
+        return CurrFrameColor;
+    }
     
     float4 PrevFrameColor = CurrFrameColor;
     
@@ -85,7 +90,7 @@ float4 PS(VertexOut pin) : SV_Target
         
         PrevFrameColor = clamp(PrevFrameColor, minColor, maxColor);
         
-        float BlendFactor = 0.9 * saturate(MotionLength / 50.0); // more movement == less influence
+        float BlendFactor = 0.9 * saturate( 1 / MotionLength / 50.0); // more movement == less influence
         return lerp(CurrFrameColor, PrevFrameColor, BlendFactor);
     }
     
