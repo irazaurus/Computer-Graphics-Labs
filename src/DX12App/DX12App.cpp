@@ -15,7 +15,7 @@ using namespace DirectX::PackedVector;
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "D3D12.lib")
 
-#define DEBUG_VIEW
+// #define DEBUG_VIEW
 // #define DEBUG
 
 const int gNumFrameResources = 3;
@@ -757,6 +757,11 @@ void DX12App::LoadTextures()
 	LoadTexture("skyBrdf", L"../Textures/skyBrdf.dds");
 	LoadTexture("skyDiffuseCube", L"../Textures/skyDiffuseCube.dds", TextureType::CUBEMAP);
 	LoadTexture("skyIrradianceCube", L"../Textures/skyIrradianceCube.dds", TextureType::CUBEMAP);
+
+	// Load textures for terrain
+	LoadTexture("Terrain1Diffuse", L"../Textures/grass.dds");
+	LoadTexture("Terrain2Diffuse", L"../Textures/stone.dds");
+	LoadTexture("Terrain3Diffuse", L"../Textures/ice.dds");
 }
 
 void DX12App::LoadTerrainTextures()
@@ -1597,6 +1602,20 @@ void DX12App::DrawDeferredGeometry()
 
 	mCommandList->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	DrawRenderItems(mCommandList.Get(), mVisibleRitems[(int)RenderLayer::Opaque]);
+
+	mCommandList->SetGraphicsRootDescriptorTable(4, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+		mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+		mTextures["Terrain1Diffuse"]->SrvHeapIndex,
+		mCbvSrvDescriptorSize));
+	mCommandList->SetGraphicsRootDescriptorTable(5, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+		mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+		mTextures["Terrain2Diffuse"]->SrvHeapIndex,
+		mCbvSrvDescriptorSize));
+	mCommandList->SetGraphicsRootDescriptorTable(6, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+		mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+		mTextures["Terrain3Diffuse"]->SrvHeapIndex,
+		mCbvSrvDescriptorSize));
+
 
 	// terrain w/ tessellation draw
 	mCommandList->SetPipelineState(mPSOs["terrainGeometry"].Get());

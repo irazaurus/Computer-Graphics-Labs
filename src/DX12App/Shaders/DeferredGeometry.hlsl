@@ -4,6 +4,9 @@ Texture2D gDiffuseMap : register(t0);
 Texture2D gNormalMap : register(t1);
 Texture2D gDisplacementMap : register(t2);
 Texture2DArray gShadowMap : register(t3);
+Texture2D gTerrainTexture1 : register(t4);
+Texture2D gTerrainTexture2 : register(t5);
+Texture2D gTerrainTexture3 : register(t6);
 
 struct VertexIn
 {
@@ -223,6 +226,39 @@ GBufferData OriginalNormalPS(VertexOut pin)
     float3 normalMap = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
     
     float4 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC);
+    
+    float Threshold12 = 50.f;
+    float Threshold23 = 100.f;
+    float BlendRange = 20.f;
+    
+    float BlendFactor1 = 0.f;
+    float BlendFactor2 = 0.f;
+    float BlendFactor3 = 0.f;
+    
+    if (pin.PosW.y < Threshold12 - BlendRange)
+        BlendFactor1 = 1.f;
+    else if (pin.PosW.y < Threshold12 + BlendRange)
+    {
+        float t = saturate((pin.PosW.y - (Threshold12 - BlendRange)) / (2.f * BlendRange));
+        BlendFactor1 = 1.f - t;
+        BlendFactor2 = t;
+    }
+    else if (pin.PosW.y < Threshold23 - BlendRange)
+        BlendFactor2 = 1.f;
+    else if (pin.PosW.y < Threshold23 + BlendRange)
+    {
+        float t = saturate((pin.PosW.y - (Threshold23 - BlendRange)) / (2.f * BlendRange));
+        BlendFactor2 = 1.f - t;
+        BlendFactor3 = t;
+    }
+    else
+        BlendFactor3 = 1.f;
+    
+    float4 tex1 = gTerrainTexture1.Sample(gsamAnisotropicWrap, pin.TexC);
+    float4 tex2 = gTerrainTexture2.Sample(gsamAnisotropicWrap, pin.TexC);
+    float4 tex3 = gTerrainTexture3.Sample(gsamAnisotropicWrap, pin.TexC);
+    
+    diffuseAlbedo = tex1 * BlendFactor1 + tex2 * BlendFactor2 + tex3 * BlendFactor3;
 
     pout.diffuse = diffuseAlbedo;
     pout.zwzanashih_RGBA32F = float4(0.f, 0.f, 0.f, pin.PosH.z);
