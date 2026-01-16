@@ -32,6 +32,50 @@ struct VertexOut
     float4 PosH : SV_POSITION;
 };
 
+float4 Blur(float4 currentColor, uint2 texelCoord)
+{
+    float blurAmount = 3.0f;
+    float4 blurredColor = float4(0, 0, 0, 0);
+    float weightSum = 0.0f;
+    
+    const int kernelSize = 5;
+    const float kernel[5][5] =
+    {
+        { 0.003, 0.013, 0.022, 0.013, 0.003 },
+        { 0.013, 0.059, 0.097, 0.059, 0.013 },
+        { 0.022, 0.097, 0.159, 0.097, 0.022 },
+        { 0.013, 0.059, 0.097, 0.059, 0.013 },
+        { 0.003, 0.013, 0.022, 0.013, 0.003 }
+    };
+   
+    for (int x = -2; x <= 2; x++)
+    {
+        for (int y = -2; y <= 2; y++)
+        {
+            uint2 sampleCoord = texelCoord + uint2(x, y);
+            if (all(sampleCoord >= 0 && sampleCoord < gRenderTargetSize))
+            {
+                float4 sampleColor = gInputImage.Load(int3(sampleCoord, 0));
+                float weight = kernel[x + 2][y + 2];
+                blurredColor += sampleColor * weight;
+                weightSum += weight;
+            }
+        }
+    }
+        
+    if (weightSum > 0)
+    {
+        blurredColor /= weightSum;
+    }
+    else
+    {
+        blurredColor = currentColor;
+    }
+    
+    return blurredColor;
+}
+
+
 VertexOut VS(uint vid : SV_VertexID)
 {    
     // Generating fullscreen triangle
@@ -58,6 +102,10 @@ float4 PS(VertexOut pin) : SV_Target
     
     float2 PrevTexelCoord = TexelCoord + MotionVector;
     float4 CurrFrameColor = gInputImage.Load(int3(TexelCoord, 0));
+    
+    if (MotionVector.x == 0 && MotionVector.y == 0)
+        CurrFrameColor = Blur(CurrFrameColor, TexelCoord);
+    
     if (length(gEyePosW - PrevCameraPos) > 0.001f)
     {
         return CurrFrameColor;

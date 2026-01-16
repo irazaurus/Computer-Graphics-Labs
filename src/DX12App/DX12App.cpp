@@ -397,7 +397,7 @@ void DX12App::Update(const GameTimer& gt)
 		CloseHandle(eventHandle);
 	}
 
-	//AnimateObjects(gt);
+	AnimateObjects(gt);
 	UpdateObjectCBs(gt);
 	UpdateVisibleTerrainTiles();
 	UpdateLightCBs(gt);
