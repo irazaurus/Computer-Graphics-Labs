@@ -94,6 +94,7 @@ struct LightObject
 	int NumFramesDirty = gNumFrameResources;
 	std::string GeoName;
 	ShadowMap* shadowMap;
+	ShadowMap* BlurredshadowMap;
 };
 
 class DX12App : public D3DApp
@@ -335,7 +336,10 @@ void DX12App::OnResize()
 			D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
 		for (auto& light : mAllLights)
+		{
 			light->shadowMap->OnResize(mClientWidth, mClientHeight);
+			light->BlurredshadowMap->OnResize(mClientWidth, mClientHeight);
+		}
 	}
 }
 
@@ -1061,6 +1065,8 @@ void DX12App::BuildShadersAndInputLayout()
 	mShaders["RTLightsVS"] = DXCCompileShader(L"Shaders\\RTLights.hlsl", nullptr, "VS", L"vs_6_7");
 	mShaders["RTLightsGeometryVS"] = DXCCompileShader(L"Shaders\\RTLights.hlsl", nullptr, "LightsGeometryVS", L"vs_6_7");
 	mShaders["RTLightsPS"] = DXCCompileShader(L"Shaders\\RTLights.hlsl", nullptr, "PS", L"ps_6_7");
+	mShaders["RTLightsBlurVS"] = DXCCompileShader(L"Shaders\\RTLights_BlurPass.hlsl", nullptr, "VS", L"vs_6_7");
+	mShaders["RTLightsBlurPS"] = DXCCompileShader(L"Shaders\\RTLights_BlurPass.hlsl", nullptr, "PS", L"ps_6_7");
 	
 	mShaders["postVS"] = DXCCompileShader(L"Shaders\\PostProcessing.hlsl", nullptr, "VS", L"vs_6_7");
 	mShaders["postPS"] = DXCCompileShader(L"Shaders\\PostProcessing.hlsl", nullptr, "PS", L"ps_6_7");
@@ -1470,6 +1476,20 @@ void DX12App::BuildPSOs()
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&RTSSPSODesc, IID_PPV_ARGS(&mPSOs["RTLightsGeometry"])));
 
+	RTSSPSODesc.InputLayout = { nullptr, 0 };
+	RTSSPSODesc.VS =
+	{
+	 reinterpret_cast<BYTE*>(mShaders["RTLightsBlurVS"]->GetBufferPointer()),
+	 mShaders["RTLightsBlurVS"]->GetBufferSize()
+	};
+	RTSSPSODesc.PS =
+	{
+	 reinterpret_cast<BYTE*>(mShaders["RTLightsBlurPS"]->GetBufferPointer()),
+	 mShaders["RTLightsBlurPS"]->GetBufferSize()
+	};
+
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&RTSSPSODesc, IID_PPV_ARGS(&mPSOs["RTLightsBlurPass"])));
+
 }
 
 void DX12App::BuildFrameResources()
@@ -1641,6 +1661,7 @@ void DX12App::BuildLightObjects()
 	auto srvGpuStart = mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
 	auto dsvCpuStart = mDsvHeap->GetCPUDescriptorHandleForHeapStart();
 
+	int k = 0;
 	for (size_t i = 0; i < mAllLights.size(); i++)
 	{
 		switch (mAllLights.at(i)->LightType)
@@ -1661,10 +1682,19 @@ void DX12App::BuildLightObjects()
 		mAllLights.at(i)->shadowMap = new ShadowMap(md3dDevice.Get(), mClientWidth, mClientHeight);
 
 		mAllLights.at(i)->shadowMap->BuildDescriptors(
-			CD3DX12_CPU_DESCRIPTOR_HANDLE(srvCpuStart, mShadowMapHeapIndex + i, mCbvSrvUavDescriptorSize),
-			CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGpuStart, mShadowMapHeapIndex + i, mCbvSrvUavDescriptorSize),
-			CD3DX12_CPU_DESCRIPTOR_HANDLE(dsvCpuStart, 1 + i, mDsvDescriptorSize));
+			CD3DX12_CPU_DESCRIPTOR_HANDLE(srvCpuStart, mShadowMapHeapIndex + k, mCbvSrvUavDescriptorSize),
+			CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGpuStart, mShadowMapHeapIndex + k, mCbvSrvUavDescriptorSize),
+			CD3DX12_CPU_DESCRIPTOR_HANDLE(dsvCpuStart, 1 + k, mDsvDescriptorSize));
+		k++;
+
+		mAllLights.at(i)->BlurredshadowMap = new ShadowMap(md3dDevice.Get(), mClientWidth, mClientHeight);
+		mAllLights.at(i)->BlurredshadowMap->BuildDescriptors(
+			CD3DX12_CPU_DESCRIPTOR_HANDLE(srvCpuStart, mShadowMapHeapIndex + k, mCbvSrvUavDescriptorSize),
+			CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGpuStart, mShadowMapHeapIndex + k, mCbvSrvUavDescriptorSize),
+			CD3DX12_CPU_DESCRIPTOR_HANDLE(dsvCpuStart, 1 + k, mDsvDescriptorSize));
+		k++;
 	}
+
 }
 
 void DX12App::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
@@ -1822,7 +1852,7 @@ void DX12App::DrawDeferredLights()
 
 	for (auto& Light : mAllLights)
 	{
-		auto shadowMap = Light->shadowMap;
+		auto shadowMap = Light->BlurredshadowMap;
 		mCommandList->SetGraphicsRootDescriptorTable(0, shadowMap->Srv());
 
 		D3D12_GPU_VIRTUAL_ADDRESS lightCBAddress = lightCB->GetGPUVirtualAddress() + Light->lightCBIndex * lightCBByteSize;
@@ -1968,6 +1998,24 @@ void DX12App::DrawShadowMaps()
 			shadowMap->Resource(),
 			D3D12_RESOURCE_STATE_DEPTH_WRITE,
 			D3D12_RESOURCE_STATE_GENERIC_READ));
+
+		// Blur Pass
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+			Light->BlurredshadowMap->Resource(),
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE));
+		mCommandList->ClearDepthStencilView(Light->BlurredshadowMap->Dsv(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+		mCommandList->SetGraphicsRootDescriptorTable(0, shadowMap->Srv());
+
+		mCommandList->SetPipelineState(mPSOs["RTLightsBlurPass"].Get());
+		mCommandList->OMSetRenderTargets(0, nullptr, true, &Light->BlurredshadowMap->Dsv());
+		mCommandList->DrawInstanced(6, 1, 0, 0);
+
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+			Light->BlurredshadowMap->Resource(),
+			D3D12_RESOURCE_STATE_DEPTH_WRITE,
+			D3D12_RESOURCE_STATE_GENERIC_READ));
+
 	}
 }
 

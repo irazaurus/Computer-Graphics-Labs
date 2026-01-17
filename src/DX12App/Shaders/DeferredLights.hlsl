@@ -111,49 +111,7 @@ float3 RestoreWorldPosition(float2 UV, float depth)
 
 float CalcRTShadow(uint2 TexelCoord)
 {
-    //blur depth map
-    static const float Kernel[21] =
-    {
-        0.0000000000000000, 0.0000000000014940, 0.0000000002951600,
-        0.0000000273766000, 0.0000014462100000, 0.0000487016000000,
-        0.0010722200000000, 0.0154509000000000, 0.1479700000000000,
-        0.8936300000000000, 1.0000000000000000,
-        0.8936300000000000, 0.1479700000000000, 0.0154509000000000,
-        0.0010722200000000, 0.0000487016000000, 0.0000014462100000,
-        0.0000000273766000, 0.0000000002951600, 0.0000000000014940,
-        0.0000000000000000
-    };
-    
-    float blurStrength = 2.0f;
-    
-    float result = 0.0f;
-    float kernelSum = 0.0f;
-    
-    [unroll]
-    for (int x = -10; x <= 10; x++)
-    {
-        [unroll]
-        for (int y = -10; y <= 10; y++)
-        {
-            float2 offset = float2(x, y) / gRenderTargetSize * blurStrength;
-            uint2 sampleCoord = TexelCoord + uint2(offset * gRenderTargetSize);
-            
-            if (sampleCoord.x < gRenderTargetSize.x && sampleCoord.y < gRenderTargetSize.y)
-            {
-                float kernelValue = Kernel[x + 10] * Kernel[y + 10];
-                float sampleValue = gShadowMap.Load(int4(sampleCoord, 0, 0)).x;
-                result += sampleValue * kernelValue;
-                kernelSum += kernelValue;
-            }
-        }
-    }
-    
-    if (kernelSum > 0.0f)
-    {
-        result /= kernelSum;
-    }
-    
-    return result;
+    return gShadowMap.Load(int4(TexelCoord, 0, 0)).x;
 }
 
 struct VertexIn
