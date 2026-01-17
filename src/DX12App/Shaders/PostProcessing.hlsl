@@ -161,6 +161,13 @@ float MiePhaseHG(float mu, float g)
     return (1.0f - g * g) / (4.0f * PI * pow(1.0f + g * g - 2.0f * g * mu, 1.5f));
 }
 
+bool SunVisible(float3 position, float3 sunDirection)
+{
+    if (sunDirection.y <= 0.0f)
+        return false;
+    
+    return true;
+}
 
 // - transmittance – current color is attenuated by the atmosphere (the farther we look, the denser the air -> the darker it becomes through the atmosphere)
 // - inscatter – air molecules scatter light -> a bluish tint, and the direct sunlight is scattered along its path toward you
@@ -182,8 +189,12 @@ AerialResult IntegrateAerial(float3 camPos, float tMax, float3 V)
     float3 L = float3(0, 0, 0);
 
     float mu = dot(SunDirection, V);
-    float phaseR = RayleighPhase(mu);
-    float phaseM = MiePhaseHG(mu, MieG);
+    
+    float sunVisibilityFactor = SunVisible(camPos, SunDirection) ? 1.0f : 0.0f;
+    float baseScattering = 0.01f * (1.0f - saturate(-SunDirection.y));
+    
+    float phaseR = RayleighPhase(mu) * sunVisibilityFactor + baseScattering;
+    float phaseM = MiePhaseHG(mu, MieG) * sunVisibilityFactor;
 
     [loop]
     for (int i = 0; i < N; i++)
@@ -263,6 +274,16 @@ float4 PS(VertexOut pin) : SV_Target
         
         // Ray marching
         AerialResult arSky = IntegrateAerial(camPos, tMaxSky, V);
+        
+        float sunHeightFactor = saturate(SunDirection.y * 2.0f);
+        arSky.inscatter *= sunHeightFactor;
+        
+        if (SunDirection.y < 0.0f)
+        {
+            float nightGlow = 0.01f * (1.0f - saturate(-SunDirection.y * 0.5f));
+            arSky.inscatter += BetaRayleigh * nightGlow;
+        }
+
         color.rgb = color.rgb * arSky.transmittance + arSky.inscatter;
     }
     // Otherwise pixel belongs to a scene object

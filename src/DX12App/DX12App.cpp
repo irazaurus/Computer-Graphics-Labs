@@ -100,7 +100,7 @@ struct AtmosphereSettings
 	float RayleighScaleHeight = 9200.f;
 	float MieScaleHeight = 1000.f;
 	float MieG = 0.9f;
-	float SunIntensity = 15.0f;
+	float SunIntensity = 20.0f;
 	float GroundLevelY = -1000.0f;
 	float AtmosphereTopY = 110000.0f;
 	float DensityScale = 1.0f;
@@ -131,6 +131,8 @@ private:
 	void OnKeyboardInput(const GameTimer& gt);
 
 	void AnimateMaterials(const GameTimer& gt);
+	void AnimateLights(const GameTimer& gt);
+
 	void UpdateObjectCBs(const GameTimer& gt);
 	void UpdateLightCBs(const GameTimer& gt);
 	void UpdateMaterialCBs(const GameTimer& gt);
@@ -202,6 +204,8 @@ private:
 	Camera mCamera;
 	POINT mLastMousePos;
 
+	float mLightRotationAngle = 0.0f;
+	XMFLOAT3 DirDirection;
 	UINT mShadowMapHeapIndex = 0;
 
 	// Quad tree typa shit
@@ -344,6 +348,7 @@ void DX12App::Update(const GameTimer& gt)
 	}
 
 	AnimateMaterials(gt);
+	AnimateLights(gt);
 	UpdateObjectCBs(gt);
 	UpdateVisibleTerrainTiles();
 	UpdateLightCBs(gt);
@@ -505,6 +510,22 @@ void DX12App::OnKeyboardInput(const GameTimer& gt)
 void DX12App::AnimateMaterials(const GameTimer& gt)
 {
 
+}
+
+void DX12App::AnimateLights(const GameTimer& gt)
+{
+	mLightRotationAngle += 0.2f * gt.DeltaTime();
+
+	if (mLightRotationAngle > 2.f * XM_PI)
+		mLightRotationAngle = 0.f;
+
+	XMMATRIX R = XMMatrixRotationZ(mLightRotationAngle);
+
+	XMVECTOR lightDir = XMLoadFloat3(&DirDirection);
+	lightDir = XMVector3TransformNormal(lightDir, R);
+	XMStoreFloat3(&mAllLights.at(0)->Direction, lightDir);
+
+	mAllLights[0].get()->NumFramesDirty = gNumFrameResources;
 }
 
 void DX12App::UpdateObjectCBs(const GameTimer& gt)
@@ -1536,7 +1557,7 @@ void DX12App::BuildRenderItems()
 	BuildRenderItem("quad", "bricks0", XMMatrixIdentity(), nullptr, (int)RenderLayer::Debug);
 
 	//BuildRenderItem("box", "bricks0", XMMatrixTranslation(15.f, 0.f, 0.f), nullptr);
-	BuildRenderItem("trex", "trex", XMMatrixTranslation(40.f, -5.f, -60.f), nullptr, 0, 2.f);
+	BuildRenderItem("trex", "trex", XMMatrixTranslation(-40.f, -5.f, -60.f), nullptr, 0, 2.f);
 
 	std::vector<std::string> BaryonyxLODs = {"Baryonyx", "box"};
 	BuildRenderItem("Baryonyx", "gorg", XMMatrixTranslation(0.f, -5.f, 20.f), &BaryonyxLODs);
@@ -1560,6 +1581,7 @@ void DX12App::BuildLightObjects()
 	dir1->LightType = LightType::Directional;
 	dir1->Strength = { 1.f, 1.f, 1.f };
 	dir1->Direction = { 0.57735f, -0.57735f, 0.57735f };
+	DirDirection = dir1->Direction;
 	mAllLights.push_back(std::move(dir1));
 	
 	auto spot1 = std::make_unique<LightObject>();
@@ -1861,6 +1883,15 @@ void DX12App::DrawShadowMaps()
 			D3D12_RESOURCE_STATE_DEPTH_WRITE));
 		// Clear depth stencil
 		mCommandList->ClearDepthStencilView(shadowMap->Dsv(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+
+		if (Light->LightType == LightType::Directional && Light->Direction.y > -0.01)
+		{
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				shadowMap->Resource(),
+				D3D12_RESOURCE_STATE_DEPTH_WRITE,
+				D3D12_RESOURCE_STATE_GENERIC_READ));
+			continue;
+		}
 
 		// Specify the buffers we are going to render to.
 		mCommandList->OMSetRenderTargets(0, nullptr, true, &shadowMap->Dsv());
